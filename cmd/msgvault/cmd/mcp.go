@@ -13,6 +13,7 @@ import (
 
 var mcpForceSQL bool
 var mcpNoSQLiteScanner bool
+var mcpHTTPAddr string
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
@@ -85,6 +86,9 @@ Add to Claude Desktop config:
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		if mcpHTTPAddr != "" {
+			return mcpserver.ServeHTTP(ctx, engine, cfg.AttachmentsDir(), cfg.Data.DataDir, mcpHTTPAddr)
+		}
 		return mcpserver.Serve(ctx, engine, cfg.AttachmentsDir(), cfg.Data.DataDir)
 	},
 }
@@ -93,5 +97,6 @@ func init() {
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Force SQLite queries instead of Parquet")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Disable DuckDB sqlite_scanner extension (use direct SQLite fallback)")
+	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "", "Serve over StreamableHTTP on this address (e.g. :8080) instead of stdio")
 	_ = mcpCmd.Flags().MarkHidden("no-sqlite-scanner")
 }

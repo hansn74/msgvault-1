@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -54,10 +55,8 @@ func withAccount() mcp.ToolOption {
 	)
 }
 
-// Serve creates an MCP server with email archive tools and serves over stdio.
-// It blocks until stdin is closed or the context is cancelled.
-// dataDir is the base data directory (e.g., ~/.msgvault) used for deletions.
-func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir string) error {
+// newMCPServer creates a configured MCP server with all tools registered.
+func newMCPServer(engine query.Engine, attachmentsDir, dataDir string) *server.MCPServer {
 	s := server.NewMCPServer(
 		"msgvault",
 		"1.0.0",
@@ -76,8 +75,25 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 	s.AddTool(stageDeletionTool(), h.stageDeletion)
 	s.AddTool(searchByDomainsTool(), h.searchByDomains)
 
+	return s
+}
+
+// Serve creates an MCP server with email archive tools and serves over stdio.
+// It blocks until stdin is closed or the context is cancelled.
+// dataDir is the base data directory (e.g., ~/.msgvault) used for deletions.
+func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir string) error {
+	s := newMCPServer(engine, attachmentsDir, dataDir)
 	stdio := server.NewStdioServer(s)
 	return stdio.Listen(ctx, os.Stdin, os.Stdout)
+}
+
+// ServeHTTP creates an MCP server and serves over StreamableHTTP on the given address.
+// It blocks until the context is cancelled.
+func ServeHTTP(ctx context.Context, engine query.Engine, attachmentsDir, dataDir, addr string) error {
+	s := newMCPServer(engine, attachmentsDir, dataDir)
+	httpServer := server.NewStreamableHTTPServer(s)
+	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", addr)
+	return httpServer.Start(addr)
 }
 
 func searchMessagesTool() mcp.Tool {

@@ -1078,10 +1078,12 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 	}
 
 	query := fmt.Sprintf(`
-		SELECT m.id, m.source_message_id, m.conversation_id, m.subject, m.snippet,
+		SELECT m.id, COALESCE(m.source_message_id, ''), m.conversation_id,
+			COALESCE(m.subject, ''), COALESCE(m.snippet, ''),
 			COALESCE(p_from.email_address, '') as from_email,
 			COALESCE(mr_from.display_name, p_from.display_name, '') as from_name,
-			m.sent_at, m.size_estimate, m.has_attachments, m.attachment_count
+			COALESCE(m.sent_at, ''), COALESCE(m.size_estimate, 0),
+			COALESCE(m.has_attachments, 0), COALESCE(m.attachment_count, 0)
 		FROM messages m
 		LEFT JOIN message_recipients mr_from ON mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
 		LEFT JOIN participants p_from ON p_from.id = mr_from.participant_id
