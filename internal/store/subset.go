@@ -432,11 +432,11 @@ func updateConversationCounts(db *sql.DB) error {
 // populateFTS rebuilds the FTS5 index from the copied data.
 func populateFTS(db *sql.DB) error {
 	_, err := db.Exec(`
-		INSERT OR REPLACE INTO messages_fts(
-			rowid, message_id, subject, body,
+		INSERT INTO messages_fts(
+			rowid, subject, body,
 			from_addr, to_addr, cc_addr
 		)
-		SELECT m.id, m.id, COALESCE(m.subject, ''),
+		SELECT m.id, COALESCE(m.subject, ''),
 			COALESCE(mb.body_text, ''),
 			COALESCE(
 				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''

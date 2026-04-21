@@ -359,6 +359,22 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Migrate legacy non-contentless FTS5 to contentless. Older databases
+	// were created with content stored inside FTS5's internal content table
+	// (~100KB per message of duplicated body text). Detect the legacy schema
+	// by looking for `message_id UNINDEXED` in the stored CREATE statement;
+	// the new schema omits that column. Dropping the table forces the
+	// CREATE IF NOT EXISTS below to recreate it with the new definition,
+	// and the subsequent NeedsFTSBackfill()/BackfillFTS() call repopulates
+	// the index from messages + message_bodies + participants.
+	var ftsSQL string
+	_ = s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='messages_fts'`).Scan(&ftsSQL)
+	if strings.Contains(ftsSQL, "message_id UNINDEXED") {
+		if _, err := s.db.Exec("DROP TABLE messages_fts"); err != nil {
+			return fmt.Errorf("drop legacy messages_fts: %w", err)
+		}
+	}
+
 	// Try to load and execute SQLite-specific schema (FTS5)
 	// This is optional - FTS5 may not be available in all builds
 	sqliteSchema, err := schemaFS.ReadFile("schema_sqlite.sql")

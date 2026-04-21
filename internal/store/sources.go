@@ -102,7 +102,7 @@ func (s *Store) RemoveSource(sourceID int64) error {
 		if s.fts5Available {
 			_, err := tx.Exec(`
 				DELETE FROM messages_fts
-				WHERE message_id IN (
+				WHERE rowid IN (
 					SELECT id FROM messages WHERE source_id = ?
 				)
 			`, sourceID)

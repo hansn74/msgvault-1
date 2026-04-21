@@ -410,15 +410,15 @@ func (tdb *TestDB) EnableFTS() {
 	_, _ = tdb.DB.Exec(`DROP TABLE IF EXISTS messages_fts`)
 
 	_, err := tdb.DB.Exec(`
-		CREATE VIRTUAL TABLE messages_fts USING fts5(message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr, tokenize='unicode61 remove_diacritics 1');
+		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, from_addr, to_addr, cc_addr, tokenize='unicode61 remove_diacritics 1', content='', contentless_delete=1);
 	`)
 	if err != nil {
 		tdb.T.Skipf("FTS5 not available in this SQLite build: %v", err)
 	}
 
 	_, err = tdb.DB.Exec(`
-		INSERT INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		SELECT m.id, m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
+		INSERT INTO messages_fts (rowid, subject, body, from_addr, to_addr, cc_addr)
+		SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
 			COALESCE((SELECT p.email_address FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), ''),
 			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''),
 			COALESCE((SELECT GROUP_CONCAT(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), '')

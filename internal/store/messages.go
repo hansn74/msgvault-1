@@ -930,14 +930,22 @@ func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) 
 
 // UpsertFTS inserts or replaces an FTS row for a message.
 // No-op if FTS5 is not available.
+//
+// The FTS table is contentless (content=”), so we cannot use INSERT OR
+// REPLACE — FTS5 needs an explicit DELETE to remove old terms from the
+// index before the new ones are added. contentless_delete=1 makes the
+// DELETE work without requiring the caller to supply the old values.
 func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	if !s.fts5Available {
 		return nil
 	}
+	if _, err := s.db.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO messages_fts(rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, messageID, messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
+		INSERT INTO messages_fts(rowid, subject, body, from_addr, to_addr, cc_addr)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
 	return err
 }
 
@@ -995,10 +1003,11 @@ func (s *Store) BackfillFTS(progress func(done, total int64)) (int64, error) {
 }
 
 // backfillFTSBatch inserts FTS rows for messages with id in [fromID, toID).
+// BackfillFTS clears the table before batching, so plain INSERT is safe.
 func (s *Store) backfillFTSBatch(fromID, toID int64) (int64, error) {
 	result, err := s.db.Exec(`
-		INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		SELECT m.id, m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
+		INSERT INTO messages_fts (rowid, subject, body, from_addr, to_addr, cc_addr)
+		SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
 			COALESCE(
 				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 				     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
