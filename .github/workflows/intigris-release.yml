@@ -1,0 +1,78 @@
+name: intigris-release
+
+# Thin-fork production build: linux/amd64 only, published as a Release on this
+# fork. Triggered by pushing a tag like v0.19.3-intigris.1 (or manually).
+
+on:
+  push:
+    tags:
+      - 'v*-intigris*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (branch or tag) to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0   # tags needed for version stamping
+
+      - name: System build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ make libsqlite3-dev
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build (web UI + linux/amd64 binary)
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          make build-release
+          ./msgvault version
+
+      - name: Package tarball + checksum
+        run: |
+          REF="${{ github.event.inputs.ref || github.ref_name }}"
+          VER="${REF#v}"
+          mkdir -p dist
+          tar -czf "dist/msgvault_${VER}_linux_amd64.tar.gz" msgvault
+          ( cd dist && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS )
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: true
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+
+      - name: Upload workflow artifact (manual runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: msgvault-linux-amd64
+          path: dist/*.tar.gz
