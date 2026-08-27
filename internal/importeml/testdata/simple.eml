@@ -1,0 +1,17 @@
+From: Alice Smith <alice@example.com>
+To: Bob Jones <bob@example.com>
+Cc: Charlie <charlie@example.com>
+Subject: Test email for import
+Date: Mon, 15 Jan 2024 10:30:00 +0100
+Message-ID: <test-001@example.com>
+In-Reply-To: <thread-root@example.com>
+References: <thread-root@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Hello Bob,
+
+This is a test email for the import-eml command.
+
+Best regards,
+Alice

@@ -1,0 +1,8 @@
+From: noid@example.com
+To: someone@example.com
+Subject: Email without Message-ID
+Date: Wed, 21 Feb 2024 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+This email has no Message-ID header.

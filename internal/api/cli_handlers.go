@@ -1387,6 +1387,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"export-discord",
 		"export-messages",
 		"import",
+		"import-eml",
 		"import-emlx",
 		"import-gvoice",
 		"import-imessage",
