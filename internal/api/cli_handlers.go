@@ -1402,6 +1402,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"logs",
 		"pack-attachments",
 		"repair-dates",
+		"repair-identity",
 		"repack-attachments",
 		"remove-account",
 		"show-deletion",
