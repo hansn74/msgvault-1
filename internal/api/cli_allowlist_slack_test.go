@@ -15,6 +15,8 @@ func TestCLIRunCommandAllowedSlackCommands(t *testing.T) {
 		{"sync-slack"},
 		{"sync-slack", "T0123456789", "--full"},
 		{"backfill-slack-media"},
+		{"import-slack", "./export.zip"},
+		{"import-slack", "--me", "U0123456789", "./export/"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
