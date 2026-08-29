@@ -12,6 +12,7 @@ package tldv
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -28,10 +29,16 @@ const (
 	DefaultBaseURL = "https://pasta.tldv.io"
 )
 
-// apiTimestamp is a tolerant ISO8601 decoder: it accepts RFC3339Nano and
-// date-only ("2006-01-02") wire values, and treats null/empty as the zero
-// time so absent timestamps never fail a whole meeting.
+// apiTimestamp is a tolerant timestamp decoder. The live API returns
+// JavaScript Date.toString() values ("Fri Aug 28 2026 12:30:00 GMT+0000
+// (Coordinated Universal Time)") despite the docs implying ISO8601, so it
+// accepts that form plus RFC3339Nano and date-only ("2006-01-02"), and treats
+// null/empty as the zero time so absent timestamps never fail a whole meeting.
 type apiTimestamp time.Time
+
+// jsDateLayout matches JavaScript Date.toString() output once the trailing
+// parenthesized zone name has been stripped.
+const jsDateLayout = "Mon Jan 02 2006 15:04:05 GMT-0700"
 
 func (t *apiTimestamp) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
@@ -49,6 +56,14 @@ func (t *apiTimestamp) UnmarshalJSON(data []byte) error {
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		parsed, err = time.Parse(time.DateOnly, value)
+	}
+	if err != nil {
+		// JS Date.toString(): drop the " (Zone Name)" suffix before parsing.
+		trimmed := value
+		if i := strings.Index(trimmed, " ("); i > 0 {
+			trimmed = trimmed[:i]
+		}
+		parsed, err = time.Parse(jsDateLayout, trimmed)
 	}
 	if err != nil {
 		return fmt.Errorf("parse tl;dv timestamp %q: %w", value, err)
