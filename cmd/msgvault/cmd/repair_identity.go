@@ -70,8 +70,9 @@ Examples:
 // repairIdentities confirms the own-address identity (and retro-attributes
 // is_from_me) for every source of sourceType whose resolved account address is
 // a valid email and is not already confirmed. When onlyIdentifier is non-empty,
-// only that source identifier is considered. Returns the number of sources
-// repaired and any identity-add failures after attempting every candidate.
+// only a matching source identifier or resolved account address is considered.
+// Returns the number of sources repaired and any identity-add failures after
+// attempting every candidate.
 func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.Writer) (int, error) {
 	sources, err := s.ListSources(sourceType)
 	if err != nil {
@@ -81,10 +82,12 @@ func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.
 	var failures []error
 	for _, src := range sources {
 		sourceIdentifier := strings.TrimSpace(src.Identifier)
-		if onlyIdentifier != "" && !strings.EqualFold(sourceIdentifier, onlyIdentifier) {
+		address := repairIdentityAddress(src)
+		if onlyIdentifier != "" &&
+			!strings.EqualFold(sourceIdentifier, onlyIdentifier) &&
+			!store.EqualIdentifier(address, onlyIdentifier) {
 			continue
 		}
-		address := repairIdentityAddress(src)
 		parsed, parseErr := mail.ParseAddress(address)
 		if parseErr != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, address) {
 			continue // not one plain email address; nothing to attribute against

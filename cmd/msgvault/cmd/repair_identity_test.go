@@ -106,6 +106,30 @@ func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
 	assert.Equal("owner@example.com", identities[0].Address)
 }
 
+func TestRepairIdentities_IMAPTargetMatchesConfiguredUsername(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	imapCfg := &imapclient.Config{
+		Host: "mail.example.com", Port: 993, TLS: true, Username: "owner@example.com",
+	}
+	source, err := st.GetOrCreateSource("imap", imapCfg.Identifier())
+	require.NoError(err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(source.ID, configJSON))
+
+	var buf bytes.Buffer
+	repaired, err := repairIdentities(st, "imap", "OWNER@example.com", &buf)
+	require.NoError(err)
+	assert.Equal(1, repaired)
+
+	identities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal("owner@example.com", identities[0].Address)
+}
+
 func TestRepairIdentities_SkipsOnlyMatchingIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
