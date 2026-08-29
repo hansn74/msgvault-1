@@ -86,6 +86,10 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 			return nil, errors.New("tldv API rejected the key: check [[tldv]] api_key in config.toml (created in tl;dv's API settings; sent as the x-api-key header)")
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("tldv GET %s: %w", reqURL, errNotFound)
+		case resp.StatusCode == http.StatusNoContent:
+			// The live API answers 204 (not 404) for a meeting with no
+			// transcript/notes; report it the same way as absent.
+			return nil, fmt.Errorf("tldv GET %s: %w", reqURL, errNotFound)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
 			timer := time.NewTimer(wait)

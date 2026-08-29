@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -210,6 +211,13 @@ func (imp *Importer) forEachMeeting(ctx context.Context, sourceID int64, identif
 			sum.NotesProcessed++
 			meeting, err := imp.client.GetMeeting(ctx, listed.ID)
 			if err != nil {
+				// A meeting can be listed yet 404 on detail (deleted server-side).
+				// That is permanent, so counting it as an error would block the
+				// incremental cursor forever; log and skip instead.
+				if errors.Is(err, errNotFound) {
+					progress(fmt.Sprintf("meeting %s: gone on detail fetch; skipped", listed.ID))
+					continue
+				}
 				sum.Errors++
 				progress(fmt.Sprintf("meeting %s: fetch failed: %v", listed.ID, err))
 				continue

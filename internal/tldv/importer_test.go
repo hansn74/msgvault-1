@@ -24,7 +24,8 @@ type fakeAPI struct {
 	detail     map[string][]byte
 	transcript map[string][]byte
 	notes      map[string][]byte
-	fail       map[string]bool // meeting ID -> serve 404 on detail
+	fail       map[string]bool // meeting ID -> serve malformed JSON on detail (a counted error)
+	gone       map[string]bool // meeting ID -> serve 404 on detail (deleted; skipped)
 }
 
 func newFakeAPI() *fakeAPI {
@@ -33,6 +34,7 @@ func newFakeAPI() *fakeAPI {
 		transcript: map[string][]byte{},
 		notes:      map[string][]byte{},
 		fail:       map[string]bool{},
+		gone:       map[string]bool{},
 	}
 }
 
@@ -59,6 +61,11 @@ func (f *fakeAPI) handler() http.Handler {
 		case strings.HasSuffix(rest, "/transcript"):
 			id := strings.TrimSuffix(rest, "/transcript")
 			if body, ok := f.transcript[id]; ok {
+				if body == nil {
+					// The live API answers 204 for a meeting with no transcript.
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				_, _ = w.Write(body)
 				return
 			}
@@ -73,6 +80,10 @@ func (f *fakeAPI) handler() http.Handler {
 		default:
 			id := rest
 			if f.fail[id] {
+				_, _ = w.Write([]byte(`{"id": broken`))
+				return
+			}
+			if f.gone[id] {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
@@ -358,7 +369,7 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	require.EqualValues(0, sum.Errors)
 	assert.Equal("2026-06-02T09:50:00Z", cursorOf(sum.SourceID))
 
-	// Failing run: m2 detail 404s; the cursor must not advance.
+	// Failing run: m2 detail returns malformed JSON; the cursor must not advance.
 	api.mu.Lock()
 	api.detail["m3"] = []byte(`{"id":"m3","name":"Three","happenedAt":"2026-06-05T12:00:00Z","organizer":{"email":"org@example.com"},"invitees":[]}`)
 	api.orderedIDs = []string{"m1", "m2", "m3"}
@@ -379,6 +390,50 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	require.NoError(err)
 	require.EqualValues(0, sum3.Errors)
 	assert.Equal("2026-06-05T12:00:00Z", cursorOf(sum3.SourceID))
+}
+
+// A meeting listed but 404ing on detail (deleted server-side) is permanent,
+// so it must be skipped without an error — otherwise the cursor could never
+// advance past it. Discovered live: one deleted meeting in a real workspace.
+func TestImport_GoneMeetingSkippedWithoutError(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	api := newFakeAPI()
+	api.orderedIDs = []string{"m1", "m2"}
+	api.detail["m1"] = []byte(`{"id":"m1","name":"One","happenedAt":"2026-06-01T15:00:00Z","organizer":{"email":"org@example.com"},"invitees":[]}`)
+	api.detail["m2"] = []byte(`{"id":"m2","name":"Two","happenedAt":"2026-06-02T09:50:00Z","organizer":{"email":"org@example.com"},"invitees":[]}`)
+	api.gone["m2"] = true
+	imp, st := newTestImporter(t, api)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "work", AccountEmail: "work@example.com"})
+	require.NoError(err, "a deleted meeting must not fail the run")
+	assert.EqualValues(0, sum.Errors)
+	assert.EqualValues(1, sum.NotesAdded, "only the live meeting is ingested")
+
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(1, count)
+}
+
+// The live API answers 204 No Content (not 404) for a meeting without a
+// transcript; the meeting must still be archived, transcript-less.
+func TestImport_NoContentTranscriptArchivesMeeting(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	api := newFakeAPI()
+	api.orderedIDs = []string{"m1"}
+	api.detail["m1"] = []byte(`{"id":"m1","name":"Untranscribed","happenedAt":"2026-06-01T15:00:00Z","organizer":{"email":"org@example.com"},"invitees":[]}`)
+	api.transcript["m1"] = nil // fake serves 204 for nil transcript payloads
+	imp, st := newTestImporter(t, api)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "work", AccountEmail: "work@example.com"})
+	require.NoError(err)
+	assert.EqualValues(0, sum.Errors)
+	assert.EqualValues(1, sum.NotesAdded)
+
+	var subject string
+	require.NoError(st.DB().QueryRow(`SELECT subject FROM messages`).Scan(&subject))
+	assert.Equal("Untranscribed", subject)
 }
 
 func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
