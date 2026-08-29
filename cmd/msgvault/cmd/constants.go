@@ -22,6 +22,7 @@ const (
 	sourceTypeTwilio         = "twilio"
 	sourceTypeMuesli         = "muesli"
 	sourceTypeTwenty         = "twenty"
+	sourceTypeTldv           = "tldv"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

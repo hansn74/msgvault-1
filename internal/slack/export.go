@@ -106,7 +106,7 @@ func (imp *Importer) ImportExport(ctx context.Context, src string, opts ExportOp
 		if cerr != nil {
 			return sum, fmt.Errorf("ensure conversation %s: %w", ec.conv.ID, cerr)
 		}
-		toRecipients, merr := imp.exportMembership(convID, &ec.conv, ec.members, meUserID)
+		toRecipients, merr := imp.exportMembership(ctx, convID, &ec.conv, ec.members, meUserID)
 		if merr != nil {
 			return sum, merr
 		}
@@ -138,7 +138,7 @@ func (imp *Importer) ImportExport(ctx context.Context, src string, opts ExportOp
 				continue
 			}
 			for j := range msgs {
-				if perr := imp.persistExportMessage(convID, source.ID, ec.conv.ID, &msgs[j], meUserID, toRecipients, sum); perr != nil {
+				if perr := imp.persistExportMessage(ctx, convID, source.ID, ec.conv.ID, &msgs[j], meUserID, toRecipients, sum); perr != nil {
 					return sum, perr
 				}
 			}
@@ -159,7 +159,7 @@ func (imp *Importer) ImportExport(ctx context.Context, src string, opts ExportOp
 // ensureMembership: DMs/group DMs also yield the per-message "to" recipient
 // set; channels return a non-nil empty set (deliberately clearing any stale
 // "to" fanout, matching the live importer's channel semantics).
-func (imp *Importer) exportMembership(convID int64, c *Conversation, members []string, meUserID string) ([]messageRecipient, error) {
+func (imp *Importer) exportMembership(ctx context.Context, convID int64, c *Conversation, members []string, meUserID string) ([]messageRecipient, error) {
 	var refs []store.ConversationParticipantRef
 	directRecipients := make([]messageRecipient, 0)
 	seen := map[string]bool{}
@@ -168,7 +168,7 @@ func (imp *Importer) exportMembership(convID int64, c *Conversation, members []s
 			return nil
 		}
 		seen[userID] = true
-		pid, err := imp.res.resolveID(userID)
+		pid, err := imp.res.resolveID(ctx, userID)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func (imp *Importer) exportMembership(convID int64, c *Conversation, members []s
 // persistRecipients/persistReactions helpers, but takes no API client — no
 // tombstone existence probe (exports carry no tombstones) and no file
 // downloads.
-func (imp *Importer) persistExportMessage(convID, sourceID int64, channelID string, m *Message, meUserID string, toRecipients []messageRecipient, sum *ImportSummary) error {
+func (imp *Importer) persistExportMessage(ctx context.Context, convID, sourceID int64, channelID string, m *Message, meUserID string, toRecipients []messageRecipient, sum *ImportSummary) error {
 	if m.Type != "message" || m.TS == "" {
 		return nil
 	}
@@ -226,9 +226,9 @@ func (imp *Importer) persistExportMessage(convID, sourceID int64, channelID stri
 
 	var senderPID int64
 	if m.User != "" {
-		senderPID, err = imp.res.resolveID(m.User)
+		senderPID, err = imp.res.resolveID(ctx, m.User)
 	} else if m.BotID != "" {
-		senderPID, err = imp.res.resolveBot(m.BotID, m.Username)
+		senderPID, err = imp.res.resolveBot(ctx, m.BotID, m.Username)
 	}
 	if err != nil {
 		return err
@@ -254,10 +254,10 @@ func (imp *Importer) persistExportMessage(convID, sourceID int64, channelID stri
 			return fmt.Errorf("set message edited: %w", err)
 		}
 	}
-	if err := imp.persistRecipients(messageID, m, senderPID, toRecipients); err != nil {
+	if err := imp.persistRecipients(ctx, messageID, m, senderPID, toRecipients); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(messageID, m); err != nil {
+	if err := imp.persistReactions(ctx, messageID, m); err != nil {
 		return err
 	}
 	if m.IsThreadReply() {
