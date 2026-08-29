@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/synctechsms"
+	"go.kenn.io/msgvault/internal/tldv"
 )
 
 type sourceScheduleKind uint8
@@ -94,6 +95,10 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config Identifier (see
 		// internal/circleback/importer.go GetOrCreateSource call).
 		return "circleback:" + identifier, true
+	case tldv.SourceType:
+		// Store identifier == config Identifier (see
+		// internal/tldv/importer.go GetOrCreateSource call).
+		return "tldv:" + identifier, true
 	case sourceTypeBeeper:
 		// One scheduler job syncs every beeper source (see
 		// internal/beeper/importer.go GetOrCreateSource, one store source

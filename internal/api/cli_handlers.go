@@ -1413,7 +1413,9 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-granola",
 		"sync-slack",
 		"sync-synctech-sms",
-		"sync-teams":
+		"sync-teams",
+		"add-tldv",
+		"sync-tldv":
 		return true
 	default:
 		return false

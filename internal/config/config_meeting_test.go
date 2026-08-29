@@ -62,6 +62,77 @@ enabled = true
 	require.Len(cfg.ScheduledCirclebackSources(), 1)
 }
 
+func TestLoadWithTldvSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	configPath := writeMeetingConfig(t, `
+[[tldv]]
+identifier = "alice@example.com"
+account_email = "alice@example.com"
+api_key = "tldv_test1"
+schedule = "0 */6 * * *"
+enabled = true
+
+[[tldv]]
+identifier = "work"
+account_email = "work@example.com"
+api_key = "tldv_test2"
+enabled = true
+`)
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err, "Load()")
+
+	require.Len(cfg.Tldv, 2)
+	assert.Equal("tldv_test1", cfg.Tldv[0].APIKey)
+
+	src := cfg.GetTldvSource("ALICE@example.com")
+	require.NotNil(src, "lookup is case-insensitive")
+	assert.Equal("tldv_test1", src.APIKey)
+	assert.Nil(cfg.GetTldvSource("nope"))
+
+	scheduled := cfg.ScheduledTldvSources()
+	require.Len(scheduled, 1, "only entries with schedule + enabled")
+	assert.Equal("alice@example.com", scheduled[0].Identifier)
+
+	email, effErr := cfg.Tldv[0].EffectiveAccountEmail()
+	require.NoError(effErr)
+	assert.Equal("alice@example.com", email)
+}
+
+func TestLoadTldvSingleEntryDefaultsIdentifier(t *testing.T) {
+	require := require.New(t)
+	configPath := writeMeetingConfig(t, `
+[[tldv]]
+account_email = "tldv@example.com"
+api_key = "tldv_test"
+enabled = true
+`)
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err, "Load()")
+	require.Equal("default", cfg.Tldv[0].Identifier)
+}
+
+func TestLoadTldvDuplicateIdentifiersRejected(t *testing.T) {
+	require := require.New(t)
+	configPath := writeMeetingConfig(t, `
+[[tldv]]
+identifier = "same"
+account_email = "a@example.com"
+api_key = "tldv_a"
+
+[[tldv]]
+identifier = "SAME"
+account_email = "b@example.com"
+api_key = "tldv_b"
+`)
+
+	_, err := Load(configPath, "")
+	require.Error(err)
+	require.Contains(err.Error(), "duplicate identifier")
+}
+
 func TestLoadMeetingSourceSingleEntryDefaultsIdentifier(t *testing.T) {
 	require := require.New(t)
 	configPath := writeMeetingConfig(t, `

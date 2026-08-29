@@ -382,6 +382,7 @@ type Config struct {
 	Slack        SlackConfig        `toml:"slack"`
 	Granola      []GranolaSource    `toml:"granola"`
 	Circleback   []CirclebackSource `toml:"circleback"`
+	Tldv         []TldvSource       `toml:"tldv"`
 	Backup       BackupConfig       `toml:"backup"`
 	Discord      DiscordConfig      `toml:"discord"`
 
@@ -1224,6 +1225,22 @@ func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("circleback", s.Identifier, s.AccountEmail)
 }
 
+// TldvSource is one configured tl;dv account. Each entry is a top-level
+// [[tldv]] table.
+type TldvSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-tldv; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // primary account identity
+	APIKey       string `toml:"api_key"`       // key from tl;dv's API settings (sent as the x-api-key header)
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source.
+func (s TldvSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("tldv", s.Identifier, s.AccountEmail)
+}
+
 func effectiveMeetingAccountEmail(kind, identifier, configured string) (string, error) {
 	identifier = strings.TrimSpace(identifier)
 	if strings.TrimSpace(configured) != "" {
@@ -1258,6 +1275,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
 		c.Circleback[0].Identifier = "default"
+	}
+	if len(c.Tldv) == 1 && c.Tldv[0].Identifier == "" {
+		c.Tldv[0].Identifier = "default"
 	}
 }
 
@@ -1311,6 +1331,22 @@ func (c *Config) validateMeetingSources() error {
 			c.Circleback[i].AccountEmail = email
 		}
 	}
+	tldvIDs := make([]string, len(c.Tldv))
+	for i, s := range c.Tldv {
+		tldvIDs[i] = s.Identifier
+	}
+	if err := check("tldv", tldvIDs); err != nil {
+		return err
+	}
+	for i := range c.Tldv {
+		email, err := c.Tldv[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Tldv[i].AccountEmail) != "" {
+			c.Tldv[i].AccountEmail = email
+		}
+	}
 	return nil
 }
 
@@ -1353,6 +1389,29 @@ func (c *Config) GetCirclebackSource(identifier string) *CirclebackSource {
 func (c *Config) ScheduledCirclebackSources() []CirclebackSource {
 	var out []CirclebackSource
 	for _, src := range c.Circleback {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GetTldvSource returns the configured tl;dv source matching identifier
+// (case-insensitive), or nil.
+func (c *Config) GetTldvSource(identifier string) *TldvSource {
+	for _, src := range c.Tldv {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledTldvSources returns enabled tl;dv sources with a cron schedule.
+func (c *Config) ScheduledTldvSources() []TldvSource {
+	var out []TldvSource
+	for _, src := range c.Tldv {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

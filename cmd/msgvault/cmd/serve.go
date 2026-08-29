@@ -35,6 +35,7 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
+	"go.kenn.io/msgvault/internal/tldv"
 	"golang.org/x/oauth2"
 )
 
@@ -495,6 +496,35 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled circleback source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Tldv {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("tldv source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "0 */6 * * *") on the [[tldv]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledTldvSources() {
+		source := src
+		// Already matches the store identity (config Identifier ==
+		// GetOrCreateSource identifier); routed through the shared helper
+		// so registration and api.sourceStatus can never drift.
+		jobName, ok := api.SchedulerJobNameForSource(tldv.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for tldv source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredTldvSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule tldv source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled tldv source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 

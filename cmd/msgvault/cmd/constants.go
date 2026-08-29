@@ -12,6 +12,7 @@ const (
 	sourceTypeSlack      = "slack"
 	sourceTypeGranola    = "granola"
 	sourceTypeCircleback = "circleback"
+	sourceTypeTldv       = "tldv"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

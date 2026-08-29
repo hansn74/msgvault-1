@@ -672,6 +672,9 @@ func validateEditableCandidate(cfg *Config) error {
 	for index, source := range cfg.Circleback {
 		schedules[fmt.Sprintf("circleback[%d].schedule", index)] = source.Schedule
 	}
+	for index, source := range cfg.Tldv {
+		schedules[fmt.Sprintf("tldv[%d].schedule", index)] = source.Schedule
+	}
 	for key, expression := range schedules {
 		if expression == "" {
 			continue
