@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -139,14 +140,7 @@ func TestRepairIdentities_ReturnsAddFailuresAfterRemainingSources(t *testing.T) 
 	require.NoError(err)
 	succeeded, err := st.GetOrCreateSource("gmail", "succeed@example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(`
-		CREATE TRIGGER fail_repair_identity
-		BEFORE INSERT ON account_identities
-		WHEN NEW.address = 'fail@example.com'
-		BEGIN
-			SELECT RAISE(FAIL, 'forced identity failure');
-		END`)
-	require.NoError(err)
+	installFailingRepairIdentityTrigger(t, st)
 
 	var buf bytes.Buffer
 	repaired, err := repairIdentities(st, "gmail", "", &buf)
@@ -161,4 +155,36 @@ func TestRepairIdentities_ReturnsAddFailuresAfterRemainingSources(t *testing.T) 
 	succeededIdentities, listErr := st.ListAccountIdentities(succeeded.ID)
 	require.NoError(listErr)
 	assert.Len(succeededIdentities, 1)
+}
+
+func installFailingRepairIdentityTrigger(t *testing.T, st *store.Store) {
+	t.Helper()
+
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`
+			CREATE FUNCTION fail_repair_identity() RETURNS trigger
+			LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.address = 'fail@example.com' THEN
+					RAISE EXCEPTION 'forced identity failure';
+				END IF;
+				RETURN NEW;
+			END
+			$$;
+
+			CREATE TRIGGER fail_repair_identity
+			BEFORE INSERT ON account_identities
+			FOR EACH ROW EXECUTE FUNCTION fail_repair_identity()
+		`)
+	} else {
+		_, err = st.DB().Exec(`
+			CREATE TRIGGER fail_repair_identity
+			BEFORE INSERT ON account_identities
+			WHEN NEW.address = 'fail@example.com'
+			BEGIN
+				SELECT RAISE(FAIL, 'forced identity failure');
+			END`)
+	}
+	require.NoError(t, err)
 }
