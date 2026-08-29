@@ -90,10 +90,11 @@ type Meeting struct {
 	Organizer  Person    `json:"organizer"`
 	Invitees   []Person  `json:"invitees"`
 
-	// Duration is the meeting length in seconds. Template is the name of the
-	// notes template applied to the meeting (a plain string, not an object).
+	// Duration is the meeting length in seconds. The wire "template" field is
+	// deliberately not decoded: the docs describe it as a string but the live
+	// detail endpoint returns an object, and the importer never uses it — the
+	// verbatim value is preserved in Raw regardless.
 	Duration        float64 `json:"duration"`
-	Template        string  `json:"template"`
 	ExtraProperties struct {
 		ConferenceID string `json:"conferenceId"`
 	} `json:"extraProperties"`
