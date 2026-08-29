@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +33,7 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	require.NoError(err)
 
 	var buf bytes.Buffer
-	n, err := repairIdentities(st, "gmail", "", &buf)
+	n, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, n, "only the valid gmail address without an identity is repaired")
 
@@ -57,7 +59,7 @@ func TestRepairIdentities_Selection(t *testing.T) {
 
 	// Idempotent: a second run repairs nothing (all now confirmed).
 	buf.Reset()
-	n2, err := repairIdentities(st, "gmail", "", &buf)
+	n2, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Zero(n2, "re-running repairs nothing once identities are confirmed")
 }
@@ -73,7 +75,7 @@ func TestRepairIdentities_SingleTarget(t *testing.T) {
 	require.NoError(err)
 
 	var buf bytes.Buffer
-	n, err := repairIdentities(st, "gmail", "FRANK@example.com", &buf) // case-insensitive
+	n, err := repairIdentities(t.Context(), st, "gmail", "FRANK@example.com", &buf) // case-insensitive
 	require.NoError(err)
 	assert.Equal(1, n)
 
@@ -96,7 +98,7 @@ func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
 	require.NoError(st.UpdateSourceSyncConfig(source.ID, configJSON))
 
 	var buf bytes.Buffer
-	repaired, err := repairIdentities(st, "imap", "", &buf)
+	repaired, err := repairIdentities(t.Context(), st, "imap", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired)
 
@@ -120,7 +122,7 @@ func TestRepairIdentities_IMAPTargetMatchesConfiguredUsername(t *testing.T) {
 	require.NoError(st.UpdateSourceSyncConfig(source.ID, configJSON))
 
 	var buf bytes.Buffer
-	repaired, err := repairIdentities(st, "imap", "OWNER@example.com", &buf)
+	repaired, err := repairIdentities(t.Context(), st, "imap", "OWNER@example.com", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired)
 
@@ -143,7 +145,7 @@ func TestRepairIdentities_SkipsOnlyMatchingIdentity(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(matching.ID, "CONFIRMED@EXAMPLE.COM", "preexisting"))
 
 	var buf bytes.Buffer
-	repaired, err := repairIdentities(st, "gmail", "", &buf)
+	repaired, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired, "only the source missing its own address is repaired")
 
@@ -167,7 +169,7 @@ func TestRepairIdentities_ReturnsAddFailuresAfterRemainingSources(t *testing.T) 
 	installFailingRepairIdentityTrigger(t, st)
 
 	var buf bytes.Buffer
-	repaired, err := repairIdentities(st, "gmail", "", &buf)
+	repaired, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.Error(err)
 	require.ErrorContains(err, "fail@example.com")
 	require.ErrorContains(err, "forced identity failure")
@@ -179,6 +181,41 @@ func TestRepairIdentities_ReturnsAddFailuresAfterRemainingSources(t *testing.T) 
 	succeededIdentities, listErr := st.ListAccountIdentities(succeeded.ID)
 	require.NoError(listErr)
 	assert.Len(succeededIdentities, 1)
+}
+
+func TestRepairIdentities_CancellationStopsBeforeNextSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	first, err := st.GetOrCreateSource("gmail", "a@example.com")
+	require.NoError(err)
+	second, err := st.GetOrCreateSource("gmail", "b@example.com")
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	reader, writer := io.Pipe()
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		var firstByte [1]byte
+		_, _ = reader.Read(firstByte[:])
+		cancel()
+		_ = reader.CloseWithError(context.Canceled)
+	}()
+
+	repaired, err := repairIdentities(ctx, st, "gmail", "", writer)
+	_ = writer.Close()
+	<-readDone
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal(1, repaired, "the completed source remains reported")
+
+	firstIdentities, listErr := st.ListAccountIdentities(first.ID)
+	require.NoError(listErr)
+	assert.Len(firstIdentities, 1)
+	secondIdentities, listErr := st.ListAccountIdentities(second.ID)
+	require.NoError(listErr)
+	assert.Empty(secondIdentities, "cancellation prevents the next source repair")
 }
 
 func installFailingRepairIdentityTrigger(t *testing.T, st *store.Store) {

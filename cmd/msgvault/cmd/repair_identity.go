@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -54,7 +55,7 @@ Examples:
 			if len(args) == 1 {
 				only = strings.TrimSpace(args[0])
 			}
-			repaired, rerr := repairIdentities(s, repairIdentityType, only, cmd.OutOrStdout())
+			repaired, rerr := repairIdentities(cmd.Context(), s, repairIdentityType, only, cmd.OutOrStdout())
 			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN())
 			if rerr != nil {
 				return errors.Join(rerr, cacheErr)
@@ -71,16 +72,20 @@ Examples:
 // is_from_me) for every source of sourceType whose resolved account address is
 // a valid email and is not already confirmed. When onlyIdentifier is non-empty,
 // only a matching source identifier or resolved account address is considered.
-// Returns the number of sources repaired and any identity-add failures after
-// attempting every candidate.
-func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.Writer) (int, error) {
-	sources, err := s.ListSources(sourceType)
+// Cancellation stops before the next source and reaches each database call.
+// Returns the number of sources repaired and any failures encountered.
+func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdentifier string, out io.Writer) (int, error) {
+	sources, err := s.ListSourcesContext(ctx, sourceType)
 	if err != nil {
 		return 0, fmt.Errorf("list %s sources: %w", sourceType, err)
 	}
 	repaired := 0
 	var failures []error
 	for _, src := range sources {
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, err)
+			break
+		}
 		sourceIdentifier := strings.TrimSpace(src.Identifier)
 		address := repairIdentityAddress(src)
 		if onlyIdentifier != "" &&
@@ -92,9 +97,11 @@ func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.
 		if parseErr != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, address) {
 			continue // not one plain email address; nothing to attribute against
 		}
-		existing, lerr := s.ListAccountIdentities(src.ID)
+		existing, lerr := s.ListAccountIdentitiesContext(ctx, src.ID)
 		if lerr != nil {
-			return repaired, fmt.Errorf("list identities for %s: %w", sourceIdentifier, lerr)
+			failures = append(failures,
+				fmt.Errorf("list identities for %s: %w", sourceIdentifier, lerr))
+			break
 		}
 		alreadyConfirmed := false
 		for _, identity := range existing {
@@ -106,15 +113,15 @@ func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.
 		if alreadyConfirmed {
 			continue // this account address is already confirmed
 		}
-		before := countFromMe(s, src.ID)
-		// AddAccountIdentity's insert hook retro-attributes matching messages in
-		// the same transaction (see store.addAccountIdentityContext).
-		if err := s.AddAccountIdentity(src.ID, address, "identity-repair"); err != nil {
+		before := countFromMe(ctx, s, src.ID)
+		// AddAccountIdentityContext's insert hook retro-attributes matching
+		// messages in the same transaction (see store.addAccountIdentityContext).
+		if err := s.AddAccountIdentityContext(ctx, src.ID, address, "identity-repair"); err != nil {
 			_, _ = fmt.Fprintf(out, "  %s: FAILED: %v\n", sourceIdentifier, err)
 			failures = append(failures, fmt.Errorf("add identity for %s: %w", sourceIdentifier, err))
 			continue
 		}
-		after := countFromMe(s, src.ID)
+		after := countFromMe(ctx, s, src.ID)
 		_, _ = fmt.Fprintf(out, "  %s: confirmed identity %s; is_from_me %d -> %d\n",
 			sourceIdentifier, address, before, after)
 		repaired++
@@ -140,9 +147,9 @@ func repairIdentityAddress(src *store.Source) string {
 
 // countFromMe returns how many messages in a source are attributed to the
 // account owner. Best-effort: a query error yields -1 (shown but non-fatal).
-func countFromMe(s *store.Store, sourceID int64) int {
+func countFromMe(ctx context.Context, s *store.Store, sourceID int64) int {
 	var n int
-	if err := s.DB().QueryRow(
+	if err := s.DB().QueryRowContext(ctx,
 		s.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND is_from_me = 1`),
 		sourceID).Scan(&n); err != nil {
 		return -1
