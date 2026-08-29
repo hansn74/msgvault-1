@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"strings"
 
 	"github.com/spf13/cobra"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -29,9 +31,9 @@ account's own address as a confirmed identity, which in the same transaction
 retro-attributes matching earlier messages (those the account sent) as
 is_from_me = 1.
 
-It is idempotent and safe: sources that already have a confirmed identity are
-skipped (re-adding an existing identity would not re-attribute), and only
-sources whose identifier looks like an email address are touched.
+It is idempotent and safe: a source is skipped when its account address is
+already confirmed, and only plain, valid email addresses are touched. Other
+confirmed aliases do not suppress repair of the account address.
 
 Examples:
   msgvault repair-identity                       # all Gmail accounts missing an identity
@@ -66,42 +68,71 @@ Examples:
 }
 
 // repairIdentities confirms the own-address identity (and retro-attributes
-// is_from_me) for every source of sourceType whose identifier is an email and
-// which has no confirmed identity yet. When onlyIdentifier is non-empty, only
-// that account is considered. Returns the number of sources repaired.
+// is_from_me) for every source of sourceType whose resolved account address is
+// a valid email and is not already confirmed. When onlyIdentifier is non-empty,
+// only that source identifier is considered. Returns the number of sources
+// repaired and any identity-add failures after attempting every candidate.
 func repairIdentities(s *store.Store, sourceType, onlyIdentifier string, out io.Writer) (int, error) {
 	sources, err := s.ListSources(sourceType)
 	if err != nil {
 		return 0, fmt.Errorf("list %s sources: %w", sourceType, err)
 	}
 	repaired := 0
+	var failures []error
 	for _, src := range sources {
-		id := strings.TrimSpace(src.Identifier)
-		if onlyIdentifier != "" && !strings.EqualFold(id, onlyIdentifier) {
+		sourceIdentifier := strings.TrimSpace(src.Identifier)
+		if onlyIdentifier != "" && !strings.EqualFold(sourceIdentifier, onlyIdentifier) {
 			continue
 		}
-		if !strings.Contains(id, "@") {
-			continue // not an email-shaped identifier; nothing to attribute against
+		address := repairIdentityAddress(src)
+		parsed, parseErr := mail.ParseAddress(address)
+		if parseErr != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, address) {
+			continue // not one plain email address; nothing to attribute against
 		}
 		existing, lerr := s.ListAccountIdentities(src.ID)
 		if lerr != nil {
-			return repaired, fmt.Errorf("list identities for %s: %w", id, lerr)
+			return repaired, fmt.Errorf("list identities for %s: %w", sourceIdentifier, lerr)
 		}
-		if len(existing) > 0 {
-			continue // already confirmed; AddAccountIdentity would not re-attribute
+		alreadyConfirmed := false
+		for _, identity := range existing {
+			if store.EqualIdentifier(identity.Address, address) {
+				alreadyConfirmed = true
+				break
+			}
+		}
+		if alreadyConfirmed {
+			continue // this account address is already confirmed
 		}
 		before := countFromMe(s, src.ID)
 		// AddAccountIdentity's insert hook retro-attributes matching messages in
 		// the same transaction (see store.addAccountIdentityContext).
-		if err := s.AddAccountIdentity(src.ID, id, "identity-repair"); err != nil {
-			_, _ = fmt.Fprintf(out, "  %s: FAILED: %v\n", id, err)
+		if err := s.AddAccountIdentity(src.ID, address, "identity-repair"); err != nil {
+			_, _ = fmt.Fprintf(out, "  %s: FAILED: %v\n", sourceIdentifier, err)
+			failures = append(failures, fmt.Errorf("add identity for %s: %w", sourceIdentifier, err))
 			continue
 		}
 		after := countFromMe(s, src.ID)
-		_, _ = fmt.Fprintf(out, "  %s: confirmed identity; is_from_me %d -> %d\n", id, before, after)
+		_, _ = fmt.Fprintf(out, "  %s: confirmed identity %s; is_from_me %d -> %d\n",
+			sourceIdentifier, address, before, after)
 		repaired++
 	}
-	return repaired, nil
+	return repaired, errors.Join(failures...)
+}
+
+func repairIdentityAddress(src *store.Source) string {
+	if src.SourceType != sourceTypeIMAP {
+		return strings.TrimSpace(src.Identifier)
+	}
+	if src.SyncConfig.Valid {
+		imapCfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String)
+		if err == nil && strings.TrimSpace(imapCfg.Username) != "" {
+			return strings.TrimSpace(imapCfg.Username)
+		}
+	}
+	if src.DisplayName.Valid {
+		return strings.TrimSpace(src.DisplayName.String)
+	}
+	return ""
 }
 
 // countFromMe returns how many messages in a source are attributed to the
