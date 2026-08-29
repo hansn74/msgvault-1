@@ -1750,7 +1750,9 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-notion-meetings",
 		"sync-slack",
 		"sync-synctech-sms",
-		"sync-teams":
+		"sync-teams",
+		"add-tldv",
+		"sync-tldv":
 		return true
 	default:
 		return false

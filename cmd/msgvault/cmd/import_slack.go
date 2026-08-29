@@ -44,6 +44,11 @@ Examples:
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			src := args[0]
 
 			teamID := importSlackTeam
@@ -55,7 +60,7 @@ Examples:
 				teamID = t
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -73,9 +78,9 @@ Examples:
 
 			// Rebuild analytics for whatever committed, even on interruption or
 			// partial failure (matches the other importers).
-			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 			if sum != nil && sum.SourceID != 0 {
-				if merr := runPostSourceCreateMigrations(s); merr != nil {
+				if merr := runPostSourceCreateMigrationsForInvocation(s, state); merr != nil {
 					return errors.Join(fmt.Errorf("post-source-create migrations: %w", merr), cacheErr)
 				}
 			}

@@ -52,6 +52,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/tldv"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -4308,6 +4309,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},
+		{"tldv", tldv.SourceType, "acct-3", "tldv:acct-3", true},
 		{"beeper", "beeper", "beeper-account-1", "beeper", true},
 		{"slack", "slack", "T01:U01", "slack", true},
 		{"account scheduler type", "gmail", "alice@example.com", "", false},
