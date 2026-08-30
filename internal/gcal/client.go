@@ -237,6 +237,11 @@ func isRateLimitError(body []byte) bool {
 		switch e.Reason {
 		case "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED":
 			return true
+		case "accessNotConfigured":
+			// Google files "Calendar API is not enabled in this project" under
+			// domain usageLimits too, but it is a configuration error that no
+			// amount of backoff fixes — surface it immediately.
+			return false
 		}
 		if e.Domain == "usageLimits" {
 			return true

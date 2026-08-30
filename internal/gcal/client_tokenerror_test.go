@@ -48,3 +48,24 @@ func TestRequest_TokenSourceErrorFailsFast(t *testing.T) {
 	assert.Equal(t, 1, ts.calls, "no retry on a credential error")
 	assert.Less(t, time.Since(start), 2*time.Second, "must not back off")
 }
+
+// "API not enabled in this project" arrives as a 403 in domain usageLimits —
+// the same domain as real quota errors — but must not be retried.
+func TestRequest_AccessNotConfiguredFailsFast(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"Google Calendar API has not been used in project 123 before or it is disabled.","errors":[{"message":"...","domain":"usageLimits","reason":"accessNotConfigured"}],"status":"PERMISSION_DENIED"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"}))
+	c.baseURL = srv.URL
+	start := time.Now()
+	_, err := c.ListCalendars(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has not been used in project")
+	assert.Equal(t, 1, calls, "no retry on accessNotConfigured")
+	assert.Less(t, time.Since(start), 2*time.Second)
+}
