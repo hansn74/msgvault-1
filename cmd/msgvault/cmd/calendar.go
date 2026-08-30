@@ -97,6 +97,20 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			}
 			oauthApp := appDecision.OAuthApp
 
+			// Service-account apps (domain-wide delegation) have no per-user
+			// token and no consent screen — mirror add-account and go straight
+			// to registration. buildCalendarClient mints the delegated token
+			// source; RegisterCalendars is the live proof the scope is granted.
+			if cfg.OAuth.ServiceAccountKeyFor(oauthApp) != "" {
+				client, err := buildCalendarClient(ctx, email, oauthApp, false)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = client.Close() }()
+				return registerCalendarsAndReport(ctx, cmd.OutOrStdout(), st, client, email, oauthApp,
+					oauthAppExplicit || appDecision.BindingChanged)
+			}
+
 			secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
 			if err != nil {
 				return err
@@ -175,36 +189,8 @@ func newAddCalendarLocalCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = client.Close() }()
-
-			syncer := calsync.New(client, st, calsync.Options{
-				AccountEmail:  email,
-				OAuthApp:      oauthApp,
-				OAuthAppSet:   oauthAppExplicit || appDecision.BindingChanged,
-				Calendars:     calAddCalendars,
-				AllCalendars:  calAddAll,
-				MinAccessRole: calAddMinRole,
-			}).WithLogger(logger)
-
-			// RegisterCalendars enumerates calendars (a live smoke test that the
-			// calendar scope was actually granted) and creates the source rows.
-			cals, err := syncer.RegisterCalendars(ctx)
-			if err != nil {
-				return fmt.Errorf("register calendars (was Calendar access granted?): %w", err)
-			}
-			if len(cals) == 0 {
-				fmt.Println("No calendars matched the filter (try --all-calendars or --calendars).")
-				return nil
-			}
-			fmt.Printf("Registered %d calendar(s) for %s:\n", len(cals), email)
-			for _, c := range cals {
-				fmt.Printf("  - %s (%s)\n", calendarLabel(c), c.AccessRole)
-			}
-			fmt.Printf("\nNext: %s\n", calendarSyncNextCommand(email, oauthApp, calendarSyncNextOptions{
-				AllCalendars:  calAddAll,
-				MinAccessRole: calAddMinRole,
-				Calendars:     calAddCalendars,
-			}))
-			return nil
+			return registerCalendarsAndReport(ctx, cmd.OutOrStdout(), st, client, email, oauthApp,
+				oauthAppExplicit || appDecision.BindingChanged)
 		},
 	}
 	cmd.Flags().StringVar(&calAddOAuthApp, "oauth-app", "", "named OAuth app to use")
@@ -217,6 +203,40 @@ func newAddCalendarLocalCmd() *cobra.Command {
 		panic(err)
 	}
 	return cmd
+}
+
+// registerCalendarsAndReport enumerates the account's calendars through client
+// (a live smoke test that Calendar access was actually granted), creates the
+// source rows, and prints what was registered plus the follow-up sync command.
+// Shared by the user-consent and service-account paths of add-calendar.
+func registerCalendarsAndReport(ctx context.Context, out io.Writer, st *store.Store, client gcal.API, email, oauthApp string, oauthAppSet bool) error {
+	syncer := calsync.New(client, st, calsync.Options{
+		AccountEmail:  email,
+		OAuthApp:      oauthApp,
+		OAuthAppSet:   oauthAppSet,
+		Calendars:     calAddCalendars,
+		AllCalendars:  calAddAll,
+		MinAccessRole: calAddMinRole,
+	}).WithLogger(logger)
+
+	cals, err := syncer.RegisterCalendars(ctx)
+	if err != nil {
+		return fmt.Errorf("register calendars (was Calendar access granted?): %w", err)
+	}
+	if len(cals) == 0 {
+		_, _ = fmt.Fprintln(out, "No calendars matched the filter (try --all-calendars or --calendars).")
+		return nil
+	}
+	_, _ = fmt.Fprintf(out, "Registered %d calendar(s) for %s:\n", len(cals), email)
+	for _, c := range cals {
+		_, _ = fmt.Fprintf(out, "  - %s (%s)\n", calendarLabel(c), c.AccessRole)
+	}
+	_, _ = fmt.Fprintf(out, "\nNext: %s\n", calendarSyncNextCommand(email, oauthApp, calendarSyncNextOptions{
+		AllCalendars:  calAddAll,
+		MinAccessRole: calAddMinRole,
+		Calendars:     calAddCalendars,
+	}))
+	return nil
 }
 
 func runAddCalendarHTTP(cmd *cobra.Command, args []string) error {
