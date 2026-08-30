@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -49,4 +51,29 @@ func TestRegisterCalendarsAndReport_NoMatchIsNotAnError(t *testing.T) {
 	require.NoError(t, registerCalendarsAndReport(context.Background(), &out, st, api,
 		"alice@example.com", "", false))
 	assert.Contains(t, out.String(), "No calendars matched the filter")
+}
+
+// The daemon-side plan step must not demand client_secrets for a named app
+// configured with a service account: it resolves the binding and reports that
+// no consent/escalation round trip is needed.
+func TestPlanCLIAddCalendar_ServiceAccountAppNeedsNoConsent(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		OAuth: config.OAuthConfig{
+			Apps: map[string]config.OAuthApp{
+				"sa": {ServiceAccountKey: "/nonexistent/service-account.json"},
+			},
+		},
+	}
+
+	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+		Email: "frank@example.com", OAuthApp: "sa", OAuthAppExplicit: true,
+	})
+	require.NoError(t, err, "service-account apps have no client_secrets and must not be asked for one")
+	assert.Equal(t, "sa", plan.OAuthApp)
+	assert.True(t, plan.OAuthAppResolved)
+	assert.False(t, plan.NeedsScopeEscalation)
 }

@@ -606,6 +606,17 @@ func planCLIAddCalendar(
 	}
 	oauthApp := appDecision.OAuthApp
 
+	// A service-account app has no per-user token to inspect and never needs
+	// a consent/scope-escalation round trip: report the resolved binding and
+	// let the subprocess register calendars through delegated credentials.
+	if cfg.OAuth.ServiceAccountKeyFor(oauthApp) != "" {
+		return api.CLIAddCalendarPlanResponse{
+			OAuthApp:         oauthApp,
+			OAuthAppResolved: true,
+			NeedsClientCheck: appDecision.NeedsClientCheck,
+		}, nil
+	}
+
 	secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
 	if err != nil {
 		return api.CLIAddCalendarPlanResponse{}, err
