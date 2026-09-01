@@ -160,12 +160,13 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 
 	client := embed.NewClient(embed.Config{
-		Endpoint:   cfg.Vector.Embeddings.Endpoint,
-		APIKey:     cfg.Vector.Embeddings.APIKey(),
-		Model:      cfg.Vector.Embeddings.Model,
-		Dimension:  cfg.Vector.Embeddings.Dimension,
-		Timeout:    cfg.Vector.Embeddings.Timeout,
-		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
+		Endpoint:    cfg.Vector.Embeddings.Endpoint,
+		APIKey:      cfg.Vector.Embeddings.APIKey(),
+		Model:       cfg.Vector.Embeddings.Model,
+		Dimension:   cfg.Vector.Embeddings.Dimension,
+		Timeout:     cfg.Vector.Embeddings.Timeout,
+		MaxRetries:  cfg.Vector.Embeddings.MaxRetries,
+		Concurrency: cfg.Vector.Embeddings.Concurrency,
 	})
 
 	worker := embed.NewWorker(embed.WorkerDeps{

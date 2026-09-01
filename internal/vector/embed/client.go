@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // ErrPermanent4xx marks a non-retryable HTTP 4xx response from the
@@ -42,7 +44,22 @@ type Config struct {
 	// call. Defaults to 3 when zero. Only transient errors (5xx, network)
 	// are retried; 4xx responses fail immediately.
 	MaxRetries int
+	// Concurrency is how many embedding requests a single Embed call may
+	// have in flight at once. Defaults to 1, which preserves the original
+	// one-request-per-call behaviour. Higher values split the inputs into
+	// that many contiguous parts and issue them in parallel, which is a
+	// large win against a GPU-backed endpoint whose per-request latency
+	// dominates: one batch at a time leaves the accelerator idle between
+	// round trips. Retry, dimension checks and 4xx classification are
+	// unchanged and apply per part, so error semantics (including
+	// ErrPermanent4xx, which the worker's downshift drain relies on) are
+	// identical to the serial path.
+	Concurrency int
 }
+
+// minConcurrentPart is the smallest number of inputs worth giving its own
+// request. Splitting below this trades useful batching for round trips.
+const minConcurrentPart = 8
 
 // Client calls an OpenAI-compatible /v1/embeddings endpoint.
 type Client struct {
@@ -50,13 +67,17 @@ type Client struct {
 	http *http.Client
 }
 
-// NewClient constructs a Client, applying defaults for Timeout and MaxRetries.
+// NewClient constructs a Client, applying defaults for Timeout, MaxRetries
+// and Concurrency.
 func NewClient(cfg Config) *Client {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 1
 	}
 	return &Client{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}
 }
@@ -87,6 +108,55 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	parts := c.splitForConcurrency(inputs)
+	if len(parts) == 1 {
+		return c.embedOne(ctx, inputs)
+	}
+
+	// Parts are embedded in parallel and reassembled in input order, so the
+	// caller still receives one vector per input at the same index.
+	results := make([][][]float32, len(parts))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(c.cfg.Concurrency)
+	for i, part := range parts {
+		group.Go(func() error {
+			vecs, err := c.embedOne(groupCtx, part)
+			if err != nil {
+				return err
+			}
+			results[i] = vecs
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	out := make([][]float32, 0, len(inputs))
+	for _, part := range results {
+		out = append(out, part...)
+	}
+	return out, nil
+}
+
+// splitForConcurrency divides inputs into at most Concurrency contiguous
+// parts, never smaller than minConcurrentPart. It returns a single part when
+// concurrency is disabled or the input is too small to be worth splitting.
+func (c *Client) splitForConcurrency(inputs []string) [][]string {
+	parts := min(c.cfg.Concurrency, len(inputs)/minConcurrentPart)
+	if parts <= 1 {
+		return [][]string{inputs}
+	}
+	out := make([][]string, 0, parts)
+	size := (len(inputs) + parts - 1) / parts
+	for start := 0; start < len(inputs); start += size {
+		out = append(out, inputs[start:min(start+size, len(inputs))])
+	}
+	return out
+}
+
+// embedOne performs one embeddings request for inputs, with the retry and
+// backoff policy from Config.
+func (c *Client) embedOne(ctx context.Context, inputs []string) ([][]float32, error) {
 	body, err := json.Marshal(embeddingRequest{Input: inputs, Model: c.cfg.Model})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

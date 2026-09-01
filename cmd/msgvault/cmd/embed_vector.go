@@ -114,12 +114,13 @@ func runEmbed(cmd *cobra.Command) error {
 	}
 
 	client := embed.NewClient(embed.Config{
-		Endpoint:   cfg.Vector.Embeddings.Endpoint,
-		APIKey:     cfg.Vector.Embeddings.APIKey(),
-		Model:      cfg.Vector.Embeddings.Model,
-		Dimension:  cfg.Vector.Embeddings.Dimension,
-		Timeout:    cfg.Vector.Embeddings.Timeout,
-		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
+		Endpoint:    cfg.Vector.Embeddings.Endpoint,
+		APIKey:      cfg.Vector.Embeddings.APIKey(),
+		Model:       cfg.Vector.Embeddings.Model,
+		Dimension:   cfg.Vector.Embeddings.Dimension,
+		Timeout:     cfg.Vector.Embeddings.Timeout,
+		MaxRetries:  cfg.Vector.Embeddings.MaxRetries,
+		Concurrency: cfg.Vector.Embeddings.Concurrency,
 	})
 	// "Pending" is now the count of live messages still needing work for
 	// this generation (embed_gen <> gen), read from the main DB coverage

@@ -69,6 +69,7 @@ type EmbeddingsConfig struct {
 	Timeout       time.Duration `toml:"timeout"`
 	MaxRetries    int           `toml:"max_retries"`
 	MaxInputChars int           `toml:"max_input_chars"`
+	Concurrency   int           `toml:"concurrency"`
 	ETAWindow     int           `toml:"eta_window"`
 }
 
@@ -299,6 +300,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Embeddings.Dimension <= 0 {
 		return fmt.Errorf("vector.embeddings.dimension: must be positive, got %d", c.Embeddings.Dimension)
+	}
+	if c.Embeddings.Concurrency < 0 {
+		return fmt.Errorf("vector.embeddings.concurrency: must be zero or positive, got %d", c.Embeddings.Concurrency)
 	}
 	if c.Embeddings.BatchSize <= 0 {
 		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", c.Embeddings.BatchSize)
