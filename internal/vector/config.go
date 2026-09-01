@@ -187,6 +187,7 @@ type EmbeddingsConfig struct {
 	BatchSize      int                `toml:"batch_size"`
 	Timeout        time.Duration      `toml:"timeout"`
 	MaxRetries     int                `toml:"max_retries"`
+	Concurrency    int                `toml:"concurrency"`
 	MaxInputChars  int                `toml:"max_input_chars"`
 	ETAWindow      int                `toml:"eta_window"`
 }
