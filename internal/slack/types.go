@@ -337,15 +337,18 @@ type ImportOptions struct {
 type ImportSummary struct {
 	SourceID               int64
 	ConversationsProcessed int
-	MessagesProcessed      int
-	MessagesAdded          int
-	MessagesUpdated        int
-	RepliesFetched         int
-	AttachmentsDownloaded  int
-	AttachmentsPending     int
-	AttachmentsSkipped     int
-	FetchErrors            int
-	Errors                 int
+	// ConversationsSkipped counts conversations left untouched by the
+	// channel include/exclude filters.
+	ConversationsSkipped  int
+	MessagesProcessed     int
+	MessagesAdded         int
+	MessagesUpdated       int
+	RepliesFetched        int
+	AttachmentsDownloaded int
+	AttachmentsPending    int
+	AttachmentsSkipped    int
+	FetchErrors           int
+	Errors                int
 	// UnavailableChannels lists selected ChannelIDs the credential user's
 	// conversation listing did not return. The run skips them without
 	// failing; their archived history is unchanged.
