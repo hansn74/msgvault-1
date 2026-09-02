@@ -67,8 +67,12 @@ Examples:
 			// No Client: the export path makes no Slack API calls.
 			imp := slack.NewImporter(s, nil, teamID)
 			sum, ierr := imp.ImportExport(ctx, src, slack.ExportOptions{
-				UserID:   importSlackMe,
-				Progress: func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
+				UserID: importSlackMe,
+				// Honour the same [slack] channel filters as sync-slack, so a
+				// re-import cannot reinstate channels excluded from syncing.
+				IncludeChannels: cfg.Slack.Channels,
+				ExcludeChannels: cfg.Slack.ExcludeChannels,
+				Progress:        func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
 			})
 
 			// Rebuild analytics for whatever committed, even on interruption or

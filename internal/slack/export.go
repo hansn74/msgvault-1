@@ -24,6 +24,13 @@ type ExportOptions struct {
 	// so an export shares the source row with add-slack/sync-slack when it
 	// matches. Empty defaults to the sentinel "export" (nothing from-me).
 	UserID string
+	// IncludeChannels and ExcludeChannels filter channels by name (no "#"),
+	// with the same meaning as the live sync's filters: exclude wins, an
+	// empty include list means "every channel", and DMs/group DMs are never
+	// filtered. Without these an export re-import would reinstate channels
+	// the operator has deliberately excluded from syncing.
+	IncludeChannels []string
+	ExcludeChannels []string
 	// Progress, if non-nil, is called after each conversation with a
 	// human-readable status line.
 	Progress func(string)
@@ -101,6 +108,13 @@ func (imp *Importer) ImportExport(ctx context.Context, src string, opts ExportOp
 			break
 		}
 		ec := &convs[i]
+		if !channelFilterAllows(&ec.conv, opts.IncludeChannels, opts.ExcludeChannels) {
+			sum.ConversationsSkipped++
+			if opts.Progress != nil {
+				opts.Progress(fmt.Sprintf("skipped #%s (excluded by channel filter)", ec.conv.Name))
+			}
+			continue
+		}
 		convID, cerr := imp.store.EnsureConversationWithType(
 			source.ID, ec.conv.ID, conversationType(&ec.conv), conversationTitle(&ec.conv, imp.res.displayName))
 		if cerr != nil {
