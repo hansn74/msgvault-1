@@ -404,6 +404,18 @@ func (d *SQLiteDialect) FTSDeleteSQL() string {
 	)`
 }
 
+// FTSDeleteByMessageIDsSQL deletes FTS5 rows by rowid rather than by the
+// UNINDEXED message_id column. Both identify the same rows — every writer
+// (FTSUpsert, FTSBackfillBatchSQL) sets rowid = message_id, and
+// FTSSearchClause joins on `messages_fts.rowid = m.id`, so a document whose
+// rowid does not equal its message id is unreachable by search anyway — but
+// only rowid is indexed. Matching on message_id would make each batch scan
+// the whole FTS table, which is exactly the unbounded cost a batched prune
+// exists to avoid.
+func (d *SQLiteDialect) FTSDeleteByMessageIDsSQL(placeholders string) string {
+	return `DELETE FROM messages_fts WHERE rowid IN (` + placeholders + `)`
+}
+
 func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID)
 	if d.IsNoSuchTableError(err) {
@@ -854,6 +866,16 @@ func (d *SQLiteDialect) CheckpointWAL(db *sql.DB) error {
 		)
 	}
 	return nil
+}
+
+// CheckpointWALPassive moves whatever the WAL can spare into the main
+// database without waiting for anyone. A non-zero busy result means another
+// connection held a frame back; that is expected, not an error, and the next
+// call picks up where this one stopped.
+func (d *SQLiteDialect) CheckpointWALPassive(ctx context.Context, db *sql.DB) error {
+	var busy, log, checkpointed int
+	return db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)").
+		Scan(&busy, &log, &checkpointed)
 }
 
 // SchemaStaleCheck returns the SQL to check whether the most recent migration column exists.

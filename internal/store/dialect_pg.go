@@ -449,6 +449,11 @@ func (d *PostgreSQLDialect) FTSDeleteSQL() string {
 	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
 }
 
+// FTSDeleteByMessageIDsSQL returns "" because PostgreSQL keeps the search
+// document in messages.search_fts: deleting the message row deletes its
+// index entry, so a batched prune needs no separate statement.
+func (d *PostgreSQLDialect) FTSDeleteByMessageIDsSQL(string) string { return "" }
+
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
 		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",
@@ -814,6 +819,11 @@ func (d *PostgreSQLDialect) SchemaFiles() []string {
 
 // CheckpointWAL is a no-op for PostgreSQL (no WAL checkpoint needed).
 func (d *PostgreSQLDialect) CheckpointWAL(db *sql.DB) error { return nil }
+
+// CheckpointWALPassive is a no-op: PostgreSQL recycles its own WAL segments
+// and a client has no equivalent knob (CHECKPOINT needs superuser and is a
+// server-wide stall, not a per-connection housekeeping step).
+func (d *PostgreSQLDialect) CheckpointWALPassive(context.Context, *sql.DB) error { return nil }
 
 // SchemaStaleCheck returns the SQL to check whether migrations are needed.
 // PostgreSQL uses information_schema instead of pragma_table_info.

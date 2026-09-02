@@ -1401,6 +1401,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"list-folders",
 		"logs",
 		"pack-attachments",
+		"prune-messages",
 		"repair-dates",
 		"repair-identity",
 		"repack-attachments",

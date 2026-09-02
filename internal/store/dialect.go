@@ -167,6 +167,17 @@ type Dialect interface {
 	// a given source. Takes one parameter: source_id.
 	FTSDeleteSQL() string
 
+	// FTSDeleteByMessageIDsSQL returns the SQL to remove FTS entries for an
+	// explicit list of message IDs, or "" when the backend needs no separate
+	// statement because deleting the message row already drops its search
+	// document. placeholders is a comma-separated run of `?` markers the
+	// caller binds the IDs to, in order.
+	//
+	// This is the batched-delete counterpart to FTSDeleteSQL: a bounded
+	// prune deletes messages a batch at a time and cannot restate the
+	// source-wide subquery for each one.
+	FTSDeleteByMessageIDsSQL(placeholders string) string
+
 	// InvalidateFTSForMessage removes or marks stale one message's search
 	// document before its canonical body changes. This prevents a failed
 	// best-effort reindex from leaving an old body searchable as an exact hit.
@@ -301,6 +312,15 @@ type Dialect interface {
 
 	// CheckpointWAL checkpoints the WAL (SQLite) or is a no-op (PostgreSQL).
 	CheckpointWAL(db *sql.DB) error
+
+	// CheckpointWALPassive runs a best-effort WAL checkpoint that never waits
+	// on a reader or a writer, for use between the committed batches of a
+	// long-running bulk mutation so the WAL cannot grow without bound.
+	// Unlike CheckpointWAL it does NOT treat a partial checkpoint as an
+	// error: with PASSIVE, "another connection was in the way" is the normal
+	// outcome under concurrency and the next call retries. No-op on
+	// PostgreSQL, whose WAL is recycled by the server.
+	CheckpointWALPassive(ctx context.Context, db *sql.DB) error
 
 	// Schema migration
 
