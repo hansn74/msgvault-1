@@ -232,3 +232,42 @@ func zipDir(t *testing.T, root, dest string) {
 	}))
 	require.NoError(t, zw.Close())
 }
+
+// An export re-import must honour the same [slack] channel filters as the
+// live sync; otherwise re-importing would reinstate exactly the noisy
+// channels the operator excluded from syncing. DMs and group DMs stay
+// unfiltered — the filters exist to skip channels, not people.
+func TestImportExport_ExcludeChannels(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	root := t.TempDir()
+	writeExportFixture(t, root)
+
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil, "T1")
+	sum, err := imp.ImportExport(context.Background(), root, ExportOptions{
+		UserID:          "UME",
+		ExcludeChannels: []string{"general"},
+	})
+	require.NoError(err)
+	assert.Equal(1, sum.ConversationsSkipped, "#general is excluded")
+	assert.Equal(3, sum.ConversationsProcessed, "secrets, group DM and DM still imported")
+
+	var generalRows int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), "CGEN").Scan(&generalRows))
+	assert.Zero(generalRows, "no conversation row is created for an excluded channel")
+
+	var msgs int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&msgs))
+	assert.Equal(3, msgs, "only the private channel, group DM and DM messages remain")
+
+	// The DM and group DM are untouched by a channel-name filter.
+	for _, id := range []string{"DAB", "GMP"} {
+		var n int
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), id).Scan(&n))
+		assert.Equal(1, n, "conversation %s must survive a channel filter", id)
+	}
+}

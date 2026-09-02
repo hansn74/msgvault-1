@@ -321,15 +321,18 @@ type ImportOptions struct {
 type ImportSummary struct {
 	SourceID               int64
 	ConversationsProcessed int
-	MessagesProcessed      int
-	MessagesAdded          int
-	MessagesUpdated        int
-	RepliesFetched         int
-	AttachmentsDownloaded  int
-	AttachmentsPending     int
-	AttachmentsSkipped     int
-	FetchErrors            int
-	Errors                 int
-	Duration               time.Duration
-	processedMessageIDs    map[string]struct{}
+	// ConversationsSkipped counts conversations left untouched by the
+	// channel include/exclude filters.
+	ConversationsSkipped  int
+	MessagesProcessed     int
+	MessagesAdded         int
+	MessagesUpdated       int
+	RepliesFetched        int
+	AttachmentsDownloaded int
+	AttachmentsPending    int
+	AttachmentsSkipped    int
+	FetchErrors           int
+	Errors                int
+	Duration              time.Duration
+	processedMessageIDs   map[string]struct{}
 }

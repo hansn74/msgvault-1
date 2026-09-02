@@ -349,13 +349,26 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 	if c.IsMpim {
 		return !opts.ExcludeGroupDMs
 	}
-	if slices.Contains(opts.ExcludeChannels, c.Name) {
-		return false
-	}
-	if len(opts.IncludeChannels) == 0 {
+	return channelFilterAllows(c, opts.IncludeChannels, opts.ExcludeChannels)
+}
+
+// channelFilterAllows is the channel include/exclude name filter shared by the
+// live API sync and the offline export importer, so a channel excluded from
+// one is excluded from the other — otherwise re-importing an export would
+// reinstate exactly the noisy channels the config asks to skip. DMs and group
+// DMs are never filtered (the filters exist to skip noisy channels, not
+// people). Names carry no leading "#".
+func channelFilterAllows(c *Conversation, include, exclude []string) bool {
+	if c.IsIM || c.IsMpim {
 		return true
 	}
-	return slices.Contains(opts.IncludeChannels, c.Name)
+	if slices.Contains(exclude, c.Name) {
+		return false
+	}
+	if len(include) == 0 {
+		return true
+	}
+	return slices.Contains(include, c.Name)
 }
 
 // syncConversation ensures the conversation row and membership, then walks
