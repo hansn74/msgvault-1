@@ -447,6 +447,18 @@ func (d *SQLiteDialect) FTSDeleteSQL() string {
 	)`
 }
 
+// FTSDeleteByMessageIDsSQL deletes FTS5 rows by rowid rather than by the
+// UNINDEXED message_id column. Both identify the same rows — every writer
+// (FTSUpsert, FTSBackfillBatchSQL) sets rowid = message_id, and
+// FTSSearchClause joins on `messages_fts.rowid = m.id`, so a document whose
+// rowid does not equal its message id is unreachable by search anyway — but
+// only rowid is indexed. Matching on message_id would make each batch scan
+// the whole FTS table, which is exactly the unbounded cost a batched prune
+// exists to avoid.
+func (d *SQLiteDialect) FTSDeleteByMessageIDsSQL(placeholders string) string {
+	return `DELETE FROM messages_fts WHERE rowid IN (` + placeholders + `)`
+}
+
 func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID)
 	if d.IsNoSuchTableError(err) {

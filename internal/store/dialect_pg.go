@@ -487,6 +487,11 @@ func (d *PostgreSQLDialect) FTSDeleteSQL() string {
 	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
 }
 
+// FTSDeleteByMessageIDsSQL returns "" because PostgreSQL keeps the search
+// document in messages.search_fts: deleting the message row deletes its
+// index entry, so a batched prune needs no separate statement.
+func (d *PostgreSQLDialect) FTSDeleteByMessageIDsSQL(string) string { return "" }
+
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
 		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",

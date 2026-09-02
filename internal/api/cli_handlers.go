@@ -1732,6 +1732,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"logs",
 		"pack-attachments",
 		"purge-excluded-media",
+		"prune-messages",
 		"repair-dates",
 		"repair-identity",
 		"repair-labels",

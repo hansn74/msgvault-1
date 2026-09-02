@@ -181,6 +181,17 @@ type Dialect interface {
 	// a given source. Takes one parameter: source_id.
 	FTSDeleteSQL() string
 
+	// FTSDeleteByMessageIDsSQL returns the SQL to remove FTS entries for an
+	// explicit list of message IDs, or "" when the backend needs no separate
+	// statement because deleting the message row already drops its search
+	// document. placeholders is a comma-separated run of `?` markers the
+	// caller binds the IDs to, in order.
+	//
+	// This is the batched-delete counterpart to FTSDeleteSQL: a bounded
+	// prune deletes messages a batch at a time and cannot restate the
+	// source-wide subquery for each one.
+	FTSDeleteByMessageIDsSQL(placeholders string) string
+
 	// InvalidateFTSForMessage removes or marks stale one message's search
 	// document before its canonical body changes. This prevents a failed
 	// best-effort reindex from leaving an old body searchable as an exact hit.
