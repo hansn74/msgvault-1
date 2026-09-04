@@ -528,3 +528,24 @@ func TestPruneMessages_CancelledRunIsResumable(t *testing.T) {
 	assert.Equal(t, int64(3), resumed.MessagesDeleted, "re-run finishes the job")
 	assert.False(t, resumed.Interrupted, "re-run completes")
 }
+
+// DeferFTS trades the per-batch full-text delete for one later rebuild: the
+// message rows go, their FTS documents stay. That is safe because every FTS
+// query joins messages_fts.rowid to messages.id, so an orphaned document
+// cannot surface a deleted message — it only wastes space until rebuild-fts.
+func TestPruneMessages_DeferFTSLeavesDocumentsForRebuild(t *testing.T) {
+	f := storetest.New(t)
+	_, msgID := pruneConversation(t, f, "logs-a", "#fb2-logs-app", "log line")
+
+	filter := store.PruneFilter{
+		TitlePatterns: []string{store.GlobToLikePattern("#fb2-logs-*")},
+	}
+	res, err := f.Store.PruneMessagesContext(t.Context(), filter,
+		store.PruneOptions{BatchSize: 1, DeferFTS: true})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, res.MessagesDeleted)
+
+	assert.False(t, messageExists(t, f.Store, msgID), "the message row is gone")
+	assert.Equal(t, 1, countFTSRows(t, f.Store, msgID),
+		"the FTS document is deliberately left behind for rebuild-fts")
+}
