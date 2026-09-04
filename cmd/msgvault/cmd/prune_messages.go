@@ -30,6 +30,7 @@ type pruneMessagesOptions struct {
 	titleGlobs    []string
 	botsOnly      bool
 	batchSize     int
+	deferFTS      bool
 	dryRun        bool
 	yes           bool
 	confirmed     bool
@@ -119,6 +120,8 @@ Examples:
 		"Delete only messages with no human author (sender has no email address)")
 	cmd.Flags().Int("batch-size", store.DefaultPruneBatchSize,
 		"Messages deleted per committed transaction")
+	cmd.Flags().Bool("defer-fts", false,
+		"Skip the per-batch full-text delete; run 'msgvault rebuild-fts' afterwards")
 	cmd.Flags().Bool("dry-run", false,
 		"Report what would be deleted and change nothing")
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -214,6 +217,7 @@ func runPruneMessagesLocal(cmd *cobra.Command, _ []string) error {
 
 	result, pruneErr := s.PruneMessagesContext(ctx, plan.Filter, store.PruneOptions{
 		BatchSize:          opts.batchSize,
+		DeferFTS:           opts.deferFTS,
 		Total:              plan.Total,
 		Progress:           newPruneProgressPrinter(cmd.ErrOrStderr(), plan.Total),
 		DeleteEmptySources: opts.deleteSources,
@@ -244,6 +248,9 @@ func pruneMessagesFlags(cmd *cobra.Command) (pruneMessagesOptions, error) {
 	}
 	if opts.batchSize, err = cmd.Flags().GetInt("batch-size"); err != nil {
 		return opts, fmt.Errorf("read --batch-size flag: %w", err)
+	}
+	if opts.deferFTS, err = cmd.Flags().GetBool("defer-fts"); err != nil {
+		return opts, fmt.Errorf("read --defer-fts flag: %w", err)
 	}
 	if opts.dryRun, err = cmd.Flags().GetBool("dry-run"); err != nil {
 		return opts, fmt.Errorf("read --dry-run flag: %w", err)
