@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -277,10 +278,19 @@ func TestDerivedChildDoesNotEscalateWhenCacheAbsent(t *testing.T) {
 }
 
 func TestBuildCacheInternalModesAreMutuallyExclusive(t *testing.T) {
-	_, err := requestedBuildCacheMode(true, true, false)
-	require.ErrorContains(t, err, "mutually exclusive")
-	_, err = requestedBuildCacheMode(false, true, true)
-	require.ErrorContains(t, err, "mutually exclusive")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	_, err := requestedBuildCacheMode(true, true, false, false)
+	requirements.ErrorContains(err, "mutually exclusive")
+	_, err = requestedBuildCacheMode(false, true, true, false)
+	requirements.ErrorContains(err, "mutually exclusive")
+	_, err = requestedBuildCacheMode(false, true, false, true)
+	requirements.ErrorContains(err, "mutually exclusive")
+
+	mode, err := requestedBuildCacheMode(false, false, false, true)
+	requirements.NoError(err)
+	assertions.Equal(buildCacheModeScheduledAuto, mode)
 }
 
 func snapshotCacheBytes(t *testing.T, root string) map[string]string {
@@ -350,16 +360,194 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 	}
 
 	builds := 0
-	oldRunBuild := runBuildCacheSubprocess
-	runBuildCacheSubprocess = func(context.Context, bool, bool) error {
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
 		builds++
 		return errors.New("unexpected scheduled cache build")
 	}
-	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 	err := rebuildCacheAfterScheduledSync(context.Background(), "disabled")
 	require.NoError(err)
 	assert.Zero(builds, "disabled auto_build_cache must not start a cache build")
+}
+
+func TestScheduledCacheBuildDelay(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		staleness    cacheStaleness
+		interval     time.Duration
+		wantDelay    time.Duration
+		wantThrottle bool
+	}{
+		{
+			name: "disabled interval",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-time.Minute),
+			},
+		},
+		{
+			name: "unusable publication",
+			staleness: cacheStaleness{
+				PublishedAt: now.Add(-time.Minute),
+			},
+			interval: 6 * time.Hour,
+		},
+		{
+			name: "recent publication",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    5 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "elapsed interval",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-6 * time.Hour),
+			},
+			interval: 6 * time.Hour,
+		},
+		{
+			name: "small future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    7 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "maximum future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(6 * time.Hour),
+			},
+			interval:     6 * time.Hour,
+			wantDelay:    12 * time.Hour,
+			wantThrottle: true,
+		},
+		{
+			name: "large future skew",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(6*time.Hour + time.Nanosecond),
+			},
+			interval: 6 * time.Hour,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			delay, throttle := scheduledCacheBuildDelay(tt.staleness, tt.interval, now)
+			assert.Equal(t, tt.wantThrottle, throttle)
+			assert.Equal(t, tt.wantDelay, delay)
+		})
+	}
+}
+
+func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	sentinel := errors.New("cache build sentinel")
+	tests := []struct {
+		name        string
+		publishedAt time.Time
+		buildErr    error
+		wantBuilds  int
+	}{
+		{
+			name:        "recent publication suppresses build",
+			publishedAt: now.Add(-time.Hour),
+		},
+		{
+			name:        "elapsed interval permits build",
+			publishedAt: now.Add(-7 * time.Hour),
+			wantBuilds:  1,
+		},
+		{
+			name:        "large future skew permits repair build",
+			publishedAt: now.Add(7 * time.Hour),
+			wantBuilds:  1,
+		},
+		{
+			name:        "failed build does not advance publication",
+			publishedAt: now.Add(-7 * time.Hour),
+			buildErr:    sentinel,
+			wantBuilds:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			tmpDir := setupTestSQLiteEmpty(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			writeSyncStateAt(t, analyticsDir, 0, now.Add(-24*time.Hour))
+			createFakeParquet(t, analyticsDir)
+
+			state, err := query.ReadCacheSyncState(analyticsDir)
+			requirements.NoError(err)
+			state.PublishedAt = tt.publishedAt
+			stateData, err := json.Marshal(state)
+			requirements.NoError(err)
+			requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
+
+			db, err := sql.Open("sqlite3", dbPath)
+			requirements.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO messages (id, source_id, source_message_id, sent_at)
+				VALUES (1, 1, 'new-message', ?)
+			`, now)
+			requirements.NoError(err)
+			requirements.NoError(db.Close())
+
+			savedCfg := cfg
+			cfg = &config.Config{
+				HomeDir: tmpDir,
+				Data: config.DataConfig{
+					DataDir:     tmpDir,
+					DatabaseURL: dbPath,
+				},
+				Analytics: config.AnalyticsConfig{
+					AutoBuildCache:     true,
+					MinRebuildInterval: 6 * time.Hour,
+				},
+			}
+			t.Cleanup(func() { cfg = savedCfg })
+
+			oldNow := scheduledCacheBuildNow
+			scheduledCacheBuildNow = func() time.Time { return now }
+			t.Cleanup(func() { scheduledCacheBuildNow = oldNow })
+
+			builds := 0
+			oldRunBuild := runScheduledBuildCacheSubprocess
+			runScheduledBuildCacheSubprocess = func(context.Context) error {
+				builds++
+				return tt.buildErr
+			}
+			t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+
+			err = rebuildCacheAfterScheduledSync(context.Background(), "test-source")
+			if tt.buildErr != nil {
+				requirements.ErrorIs(err, tt.buildErr)
+			} else {
+				requirements.NoError(err)
+			}
+			assertions.Equal(tt.wantBuilds, builds)
+
+			after, err := query.ReadCacheSyncState(analyticsDir)
+			requirements.NoError(err)
+			assertions.Equal(tt.publishedAt, after.PublishedAt)
+		})
+	}
 }
 
 func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
@@ -412,9 +600,9 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	}
 
 	sentinel := errors.New("scheduled cache sentinel")
-	oldRunBuild := runBuildCacheSubprocess
-	runBuildCacheSubprocess = func(context.Context, bool, bool) error { return sentinel }
-	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error { return sentinel }
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 	getOAuthMgr := func(string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth path")

@@ -43,14 +43,15 @@ type ChatConfig struct {
 
 // AnalyticsConfig controls daemon-side analytics engine selection.
 type AnalyticsConfig struct {
-	Engine             string `toml:"engine"`               // auto, sql, or duckdb
-	AutoBuildCache     bool   `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
-	BuilderMemoryLimit string `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
-	BuilderThreads     int    `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
-	BuilderTempLimit   string `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
-	QueryMemoryLimit   string `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit (default 512MB)
-	QueryThreads       int    `toml:"query_threads"`        // Optional DuckDB daemon-query threads; zero uses the default
-	QueryTempLimit     string `toml:"query_temp_limit"`     // Optional DuckDB daemon-query temp-directory limit (default 2GB)
+	Engine             string        `toml:"engine"`               // auto, sql, or duckdb
+	AutoBuildCache     bool          `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
+	MinRebuildInterval time.Duration `toml:"min_rebuild_interval"` // Minimum age before a scheduled sync can rebuild a usable stale cache
+	BuilderMemoryLimit string        `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderThreads     int           `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
+	BuilderTempLimit   string        `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
+	QueryMemoryLimit   string        `toml:"query_memory_limit"`   // Optional DuckDB daemon-query memory limit (default 512MB)
+	QueryThreads       int           `toml:"query_threads"`        // Optional DuckDB daemon-query threads; zero uses the default
+	QueryTempLimit     string        `toml:"query_temp_limit"`     // Optional DuckDB daemon-query temp-directory limit (default 2GB)
 }
 
 const (
@@ -173,6 +174,10 @@ func (a *AnalyticsConfig) Validate() error {
 	}
 	if a.QueryThreads < 0 {
 		return fmt.Errorf("invalid [analytics] query_threads %d: must be zero or positive", a.QueryThreads)
+	}
+	if a.MinRebuildInterval < 0 {
+		return fmt.Errorf("invalid [analytics] min_rebuild_interval %q: must be zero or positive",
+			a.MinRebuildInterval.String())
 	}
 	return nil
 }
