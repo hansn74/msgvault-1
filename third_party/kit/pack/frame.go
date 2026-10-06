@@ -1,0 +1,143 @@
+package pack
+
+import (
+	"fmt"
+	"sync"
+
+	"github.com/klauspost/compress/zstd"
+)
+
+// Shared zstd codecs. EncodeAll/DecodeAll are safe for concurrent use on a
+// single Encoder/Decoder, so one instance per level serves all writers.
+var (
+	zstdEncMu sync.Mutex
+	zstdEncs  = map[int]*zstd.Encoder{}
+	// Encoders for blobs too large for single-segment framing.
+	zstdEncsMulti = map[int]*zstd.Encoder{}
+	zstdDec       = func() *zstd.Decoder {
+		d, err := zstd.NewReader(nil,
+			zstd.WithDecoderConcurrency(0), zstd.WithDecoderMaxMemory(1<<32),
+			// Single-segment frames carry a window equal to their content
+			// size; the 512 MiB default would reject blobs this package
+			// itself produced.
+			zstd.WithDecoderMaxWindow(MaxRawLen))
+		if err != nil {
+			panic(fmt.Sprintf("pack: initializing zstd decoder: %v", err))
+		}
+		return d
+	}()
+)
+
+// zstdEncoderMultiSegment returns an encoder that does not use single-segment
+// framing. A single-segment frame's window is its entire content size, which
+// every decoder must then be willing to hold; above zstd.MaxWindowSize no
+// stock decoder accepts it. Blobs that large get explicit window descriptors
+// instead, so they stay readable.
+func zstdEncoderMultiSegment(level int) *zstd.Encoder {
+	if level <= 0 {
+		level = DefaultZstdLevel
+	}
+	zstdEncMu.Lock()
+	defer zstdEncMu.Unlock()
+	if enc, ok := zstdEncsMulti[level]; ok {
+		return enc
+	}
+	enc, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
+	if err != nil {
+		panic(fmt.Sprintf("pack: initializing multi-segment zstd encoder level %d: %v", level, err))
+	}
+	zstdEncsMulti[level] = enc
+	return enc
+}
+
+func zstdEncoder(level int) *zstd.Encoder {
+	if level <= 0 {
+		level = DefaultZstdLevel
+	}
+	zstdEncMu.Lock()
+	defer zstdEncMu.Unlock()
+	if enc, ok := zstdEncs[level]; ok {
+		return enc
+	}
+	enc, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
+		zstd.WithSingleSegment(true))
+	if err != nil {
+		panic(fmt.Sprintf("pack: initializing zstd encoder level %d: %v", level, err))
+	}
+	zstdEncs[level] = enc
+	return enc
+}
+
+// minCompressionSavings returns the minimum number of bytes zstd must save
+// for a compressed frame to be stored instead of raw: at least 3% of rawLen
+// rounded up (ceil(rawLen*3/100)), with a floor of 1 byte so a saving of zero
+// never counts. Rounding up, rather than truncating, matters at sizes like
+// rawLen=99 where a 2-byte saving is only 2.02% and must not qualify.
+func minCompressionSavings(rawLen int) int {
+	return max(1, (rawLen*3+99)/100)
+}
+
+// encodeFrame trial-compresses raw. It returns the compressed frame only when
+// zstd saves at least 3% (backup/FORMAT.md, Pack Files); otherwise it returns raw as-is.
+func encodeFrame(raw []byte, level int) (stored []byte, compressed bool) {
+	// Legacy bounded readers cap decoder memory at RawLen. A zstd frame always
+	// needs at least MinWindowSize, so smaller blobs must remain raw for
+	// downgrade compatibility. Single-segment frames keep larger windows tied
+	// to the authoritative content length.
+	if len(raw) < zstd.MinWindowSize {
+		return raw, false
+	}
+	encoder := zstdEncoder(level)
+	if uint64(len(raw)) > uint64(zstd.MaxWindowSize) {
+		// Single-segment framing would demand a window this large of every
+		// reader; stay within what a stock decoder accepts.
+		encoder = zstdEncoderMultiSegment(level)
+	}
+	c := encoder.EncodeAll(raw, make([]byte, 0, len(raw)))
+	minSavings := minCompressionSavings(len(raw))
+	if len(c) > len(raw)-minSavings {
+		return raw, false
+	}
+	return c, true
+}
+
+// EncodeFrame is the exported form of the frame encoding Writer.Append
+// performs, for callers that compress blobs concurrently and hand the
+// result to Writer.AppendEncoded. It is safe for concurrent use.
+func EncodeFrame(raw []byte, level int) (stored []byte, compressed bool) {
+	return encodeFrame(raw, level)
+}
+
+// maxFramePrealloc caps how many bytes decodeFrame preallocates for a
+// compressed frame's output buffer. rawLen comes from an untrusted footer
+// entry, so it must not be trusted as an allocation size directly; DecodeAll
+// grows the buffer as needed, and the length check below still catches any
+// mismatch between the decoded size and rawLen.
+const maxFramePrealloc = 4 << 20
+
+// decodeFrame reverses encodeFrame and validates the expected raw length.
+// The MaxRawLen bound applies to every frame, not only compressed ones:
+// parseFooterRegion already rejects oversized entries at footer parse time,
+// and this check backstops any caller that constructs an Entry some other
+// way.
+func decodeFrame(stored []byte, compressed bool, rawLen uint64) ([]byte, error) {
+	if rawLen > MaxRawLen {
+		return nil, fmt.Errorf("%w: raw length %d exceeds maximum %d",
+			ErrCorrupt, rawLen, uint64(MaxRawLen))
+	}
+	raw := stored
+	if compressed {
+		var err error
+		raw, err = zstdDec.DecodeAll(stored, make([]byte, 0, min(rawLen, maxFramePrealloc)))
+		if err != nil {
+			return nil, fmt.Errorf("%w: zstd decode: %w", ErrCorrupt, err)
+		}
+	}
+	if uint64(len(raw)) != rawLen {
+		return nil, fmt.Errorf("%w: frame decoded to %d bytes, expected %d",
+			ErrCorrupt, len(raw), rawLen)
+	}
+	return raw, nil
+}
