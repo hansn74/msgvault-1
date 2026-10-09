@@ -93,12 +93,13 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if src.APIKey == "" {
-			return fmt.Errorf("[[tldv]] entry %q has no api_key\n\n%s", src.Identifier, tldvConfigHint)
+		apiKey, err := src.ResolvedAPIKey()
+		if err != nil {
+			return fmt.Errorf("%w\n\n%s", err, tldvConfigHint)
 		}
 
 		// Live probe: one meeting is enough to prove the key works.
-		client := tldv.NewClient(tldv.DefaultBaseURL, src.APIKey)
+		client := tldv.NewClient(tldv.DefaultBaseURL, apiKey)
 		if _, err := client.ListMeetings(cmd.Context(), tldv.ListMeetingsParams{Page: 1, Limit: 1}); err != nil {
 			return fmt.Errorf("validate tl;dv API key: %w", err)
 		}
@@ -187,8 +188,8 @@ Examples:
 			if err != nil {
 				return err
 			}
-			if src.APIKey == "" {
-				return fmt.Errorf("[[tldv]] entry %q has no api_key", src.Identifier)
+			if _, err := src.ResolvedAPIKey(); err != nil {
+				return err
 			}
 			validatedSources = append(validatedSources, validatedTldvSource{
 				source: src, accountEmail: accountEmail,
@@ -221,7 +222,11 @@ Examples:
 			src := validated.source
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing tl;dv for %s\n\n", src.Identifier)
 
-			imp := tldv.NewImporter(s, newTldvClient(tldv.DefaultBaseURL, src.APIKey))
+			apiKey, err := src.ResolvedAPIKey()
+			if err != nil {
+				return err
+			}
+			imp := tldv.NewImporter(s, newTldvClient(tldv.DefaultBaseURL, apiKey))
 			sum, err := imp.Import(ctx, tldv.ImportOptions{
 				Identifier:   src.Identifier,
 				AccountEmail: validated.accountEmail,
@@ -298,14 +303,15 @@ func runConfiguredTldvSync(ctx context.Context, st *store.Store, src config.Tldv
 		return fmt.Errorf("tldv source %q is not registered; run msgvault add-tldv %s",
 			src.Identifier, src.Identifier)
 	}
-	if src.APIKey == "" {
-		return fmt.Errorf("tldv source %q has no api_key", src.Identifier)
+	apiKey, err := src.ResolvedAPIKey()
+	if err != nil {
+		return err
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {
 		return err
 	}
-	imp := tldv.NewImporter(st, newTldvClient(tldv.DefaultBaseURL, src.APIKey))
+	imp := tldv.NewImporter(st, newTldvClient(tldv.DefaultBaseURL, apiKey))
 	sum, err := imp.Import(ctx, tldv.ImportOptions{
 		Identifier:   src.Identifier,
 		AccountEmail: accountEmail,

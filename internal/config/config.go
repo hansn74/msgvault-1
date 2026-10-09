@@ -1747,6 +1747,26 @@ type GranolaSource struct {
 	Enabled      bool   `toml:"enabled"`
 }
 
+// ResolvedAPIKey returns the tl;dv API key, preferring the literal api_key and
+// falling back to the environment variable named by api_key_env. Keeping the
+// key out of config.toml means the settings file carries no secret, so it can
+// be read, compared or copied without exposing credentials.
+func (t TldvSource) ResolvedAPIKey() (string, error) {
+	if strings.TrimSpace(t.APIKey) != "" {
+		return t.APIKey, nil
+	}
+	name := strings.TrimSpace(t.APIKeyEnv)
+	if name == "" {
+		return "", fmt.Errorf("[[tldv]] entry %q has neither api_key nor api_key_env", t.Identifier)
+	}
+	key, ok := os.LookupEnv(name)
+	if !ok || strings.TrimSpace(key) == "" {
+		return "", fmt.Errorf("[[tldv]] entry %q: environment variable %s is unset or empty",
+			t.Identifier, name)
+	}
+	return key, nil
+}
+
 // EffectiveAccountEmail returns the normalized primary identity configured
 // for this source.
 func (s GranolaSource) EffectiveAccountEmail() (string, error) {
@@ -1846,6 +1866,7 @@ type TldvSource struct {
 	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-tldv; defaults to "default" for a single entry
 	AccountEmail string `toml:"account_email"` // primary account identity
 	APIKey       string `toml:"api_key"`       // key from tl;dv's API settings (sent as the x-api-key header)
+	APIKeyEnv    string `toml:"api_key_env"`   // environment variable holding the key, so it need not sit in config.toml
 	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
 	Enabled      bool   `toml:"enabled"`
 }
