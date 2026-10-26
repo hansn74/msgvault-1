@@ -19,13 +19,21 @@ type packVerificationKey struct{}
 // lease, so a repack that finished earlier cannot leave a stale pack location
 // for repair to delete.
 type PackVerificationPass struct {
-	start      string
-	maxEntries int
-	maxBytes   int64
+	skipLooseEnumeration bool
+	start                string
+	maxEntries           int
+	maxBytes             int64
 	// selected is set by the first ListIndexed call, which fixes the range.
 	selected bool
 	end      string
 	more     bool
+}
+
+// SkipLooseEnumeration empties Pack's candidate list for a pass that only advances
+// verification and has no new loose blob to find. Reference inventory, orphan
+// reconciliation, and loose sweeping are untouched.
+func (p *PackVerificationPass) SkipLooseEnumeration() {
+	p.skipLooseEnumeration = true
 }
 
 // BeginPackVerification starts a bounded verification window after the
@@ -120,25 +128,4 @@ func (s *Store) FinishPackVerification(ctx context.Context, pass *PackVerificati
 		return false, fmt.Errorf("checkpoint pack verification: %w", err)
 	}
 	return pass.more, nil
-}
-
-// looseEnumerationKey marks a context whose Pack pass must not enumerate loose
-// pack candidates.
-type looseEnumerationKey struct{}
-
-// SkipLooseEnumeration marks ctx so the Pack pass it drives reports no loose
-// candidates. Enumerating them scans every attachment row, while a pass that
-// only advances the verification window has no new loose blob to find. Loose
-// blobs stay loose until a sync queues an enumerating pass or the daily job
-// runs with nothing queued. Only Pack's own candidate list is suppressed:
-// reference inventory, orphan reconciliation, and loose sweeping read their
-// own queries and stay authoritative.
-func SkipLooseEnumeration(ctx context.Context) context.Context {
-	return context.WithValue(ctx, looseEnumerationKey{}, true)
-}
-
-// looseEnumerationSkipped reports whether ctx suppresses loose enumeration.
-func looseEnumerationSkipped(ctx context.Context) bool {
-	skip, _ := ctx.Value(looseEnumerationKey{}).(bool)
-	return skip
 }

@@ -369,7 +369,10 @@ func TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs(t *testing.T) {
 	require.NoError(err)
 	require.Len(candidates, 1, "the loose blob is a candidate without the flag")
 
-	skipped, err := catalog.ListUnpacked(store.SkipLooseEnumeration(context.Background()))
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	pass.SkipLooseEnumeration()
+	skipped, err := catalog.ListUnpacked(ctx)
 	require.NoError(err)
 	assert.Empty(skipped, "a suppressed pass reports no loose candidates")
 
@@ -379,7 +382,7 @@ func TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(maintainer.Close()) })
 
-	stats, err := maintainer.Pack(store.SkipLooseEnumeration(context.Background()), packstore.PackOptions{})
+	stats, err := maintainer.Pack(ctx, packstore.PackOptions{})
 	require.NoError(err)
 	assert.Equal(0, stats.BlobsPacked, "nothing is packed while enumeration is suppressed")
 	assert.FileExists(loosePath, "the deferred blob survives the suppressed pass")

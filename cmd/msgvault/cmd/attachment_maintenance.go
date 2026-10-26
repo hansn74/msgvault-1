@@ -259,7 +259,7 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context, enumerateL
 		return err
 	}
 	if !enumerateLoose {
-		packCtx = store.SkipLooseEnumeration(packCtx)
+		pass.SkipLooseEnumeration()
 	}
 	if err := m.runAutomaticPack(packCtx, nil); err != nil {
 		return err
