@@ -714,6 +714,44 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	assert.Equal(t, existing+1, stats.BlobsRestored, "manual unpack must see the full catalog")
 }
 
+func TestFinalVerificationBatchClearsBothPendingFlags(t *testing.T) {
+	for _, daily := range []bool{false, true} {
+		t.Run(fmt.Sprintf("daily=%v", daily), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			deadPackID := f.makeZeroLivePack([]byte("dead pack awaiting final verification batch"))
+			for i := range 140 {
+				f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
+			}
+			_, err := f.maintenance.pack(t.Context(), 0)
+			require.NoError(err)
+			require.NoError(f.maintenance.runScheduledPack(t.Context(), true))
+			require.True(f.maintenance.verifyPending.Load(), "the first batch leaves verification pending")
+			f.maintenance.markPackPending()
+
+			if daily {
+				err = f.maintenance.daily(t.Context())
+			} else {
+				err = f.maintenance.runPendingPack(t.Context())
+			}
+			assert.NoError(err, "the final batch must finish without rescheduling")
+			assert.False(f.maintenance.verifyPending.Load(), "completed verification must clear its request")
+			assert.False(f.maintenance.packPending.Load(), "the sync's packing request was consumed")
+			if daily {
+				recorded, err := f.store.HasPackRecordContext(t.Context(), deadPackID)
+				require.NoError(err)
+				assert.False(recorded, "daily maintenance must reclaim the dead pack after verification")
+				assert.Contains(f.logs.String(), "automatic attachment repack complete")
+			}
+			before := strings.Count(f.logs.String(), "automatic attachment maintenance complete")
+			assert.NoError(f.maintenance.runPendingPack(t.Context()))
+			assert.Equal(before, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
+				"completed verification must not queue a new cycle")
+		})
+	}
+}
+
 func TestCompletedPackVerificationRecordsNoProgress(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	ctx := jobctx.WithProgress(t.Context())

@@ -281,9 +281,11 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context, enumerateL
 // job so the scheduler records the failure instead of obscuring it with a
 // second maintenance result.
 func (m *attachmentMaintenance) daily(ctx context.Context) error {
-	// A fresh trigger always looks for loose blobs. A follow-up that exists
-	// only to walk the next verification slice does not.
-	enumerateLoose := m.packPending.Swap(false) || !m.verifyPending.Swap(false)
+	// Look for loose blobs when a sync queued a pass or nothing is queued.
+	// A pass queued only to continue verification skips loose enumeration.
+	loose := m.packPending.Swap(false)
+	verify := m.verifyPending.Swap(false)
+	enumerateLoose := loose || !verify
 	if err := m.runScheduledPack(ctx, enumerateLoose); err != nil {
 		m.markPackPending()
 		return err
@@ -301,18 +303,19 @@ func (m *attachmentMaintenance) markPackPending() {
 	}
 }
 
-// runPendingPack runs one automatic pack pass when a scheduled sync left new
-// loose blobs since the last pass. A failed pass leaves the request pending;
+// runPendingPack runs one automatic pack pass when a sync or unfinished
+// verification queued it. A failed pass leaves the request pending;
 // an exhausted byte budget queues another pass behind waiting work.
 func (m *attachmentMaintenance) runPendingPack(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
-	enumerateLoose := m.packPending.Swap(false)
-	if !enumerateLoose && !m.verifyPending.Swap(false) {
+	loose := m.packPending.Swap(false)
+	verify := m.verifyPending.Swap(false)
+	if !loose && !verify {
 		return nil
 	}
-	if err := m.runScheduledPack(ctx, enumerateLoose); err != nil {
+	if err := m.runScheduledPack(ctx, loose); err != nil {
 		m.packPending.Store(true)
 		return err
 	}

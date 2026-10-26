@@ -129,10 +129,10 @@ type looseEnumerationKey struct{}
 // SkipLooseEnumeration marks ctx so the Pack pass it drives reports no loose
 // candidates. Enumerating them scans every attachment row, while a pass that
 // only advances the verification window has no new loose blob to find. Loose
-// blobs stay loose until a pass that enumerates them runs, which every sync
-// that writes one and every scheduled trigger requests. Only Pack's own
-// candidate list is suppressed: reference inventory, orphan reconciliation,
-// and loose sweeping read their own queries and stay authoritative.
+// blobs stay loose until a sync queues an enumerating pass or the daily job
+// runs with nothing queued. Only Pack's own candidate list is suppressed:
+// reference inventory, orphan reconciliation, and loose sweeping read their
+// own queries and stay authoritative.
 func SkipLooseEnumeration(ctx context.Context) context.Context {
 	return context.WithValue(ctx, looseEnumerationKey{}, true)
 }
