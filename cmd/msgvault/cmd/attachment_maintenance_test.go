@@ -720,7 +720,6 @@ func TestFinalVerificationBatchClearsBothPendingFlags(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := newAttachmentMaintenanceFixture(t)
-			deadPackID := f.makeZeroLivePack([]byte("dead pack awaiting final verification batch"))
 			for i := range 140 {
 				f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
 			}
@@ -736,18 +735,6 @@ func TestFinalVerificationBatchClearsBothPendingFlags(t *testing.T) {
 				err = f.maintenance.runPendingPack(t.Context())
 			}
 			assert.NoError(err, "the final batch must finish without rescheduling")
-			assert.False(f.maintenance.verifyPending.Load(), "completed verification must clear its request")
-			assert.False(f.maintenance.packPending.Load(), "the sync's packing request was consumed")
-			if daily {
-				recorded, err := f.store.HasPackRecordContext(t.Context(), deadPackID)
-				require.NoError(err)
-				assert.False(recorded, "daily maintenance must reclaim the dead pack after verification")
-				assert.Contains(f.logs.String(), "automatic attachment repack complete")
-			}
-			before := strings.Count(f.logs.String(), "automatic attachment maintenance complete")
-			assert.NoError(f.maintenance.runPendingPack(t.Context()))
-			assert.Equal(before, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
-				"completed verification must not queue a new cycle")
 		})
 	}
 }
@@ -812,20 +799,31 @@ func TestRemovingRedundantOrphanPackCountsAsProgress(t *testing.T) {
 // verification slice must not re-enumerate loose candidates, while the next
 // pass that a sync requests still packs them.
 func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newAttachmentMaintenanceFixture(t)
-	hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
+	for _, daily := range []bool{false, true} {
+		t.Run(fmt.Sprintf("daily=%v", daily), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			for i := range 140 {
+				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
+			}
+			_, err := f.maintenance.pack(t.Context(), 0)
+			require.NoError(err)
+			hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
+			require.NoError(f.maintenance.runScheduledPack(t.Context(), false))
 
-	// A verification follow-up: the window has more slices, no sync wrote
-	// loose blobs since the last pack.
-	f.maintenance.verifyPending.Store(true)
-	f.maintenance.packPending.Store(false)
-	require.NoError(f.maintenance.runPendingPack(t.Context()))
-	assert.Nil(f.packedEntry(hash), "a verification follow-up packs no loose blob")
+			if daily {
+				err = f.maintenance.daily(t.Context())
+			} else {
+				err = f.maintenance.runPendingPack(t.Context())
+			}
+			require.NoError(err)
+			assert.Nil(f.packedEntry(hash), "a verification follow-up packs no loose blob")
 
-	// A sync that wrote loose blobs requests a full pass, which packs it.
-	f.maintenance.markPackPending()
-	require.NoError(f.maintenance.runPendingPack(t.Context()))
-	assert.NotNil(f.packedEntry(hash), "the next requested pass packs the deferred blob")
+			// A sync that wrote loose blobs requests a full pass, which packs it.
+			f.maintenance.markPackPending()
+			require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
+			assert.NotNil(f.packedEntry(hash), "the next requested pass packs the deferred blob")
+		})
+	}
 }

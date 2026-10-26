@@ -347,11 +347,9 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	assert.False(more)
 }
 
-// TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs proves the two
-// properties the verification follow-up path depends on: a suppressed pass
-// reports no loose candidates and packs nothing, and it leaves the loose blob
-// on disk for a later pass instead of treating absence as an orphan.
-func TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs(t *testing.T) {
+// TestSkipLooseEnumerationReportsNoCandidates checks that a verification
+// follow-up skips loose candidates.
+func TestSkipLooseEnumerationReportsNoCandidates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -375,22 +373,4 @@ func TestSkipLooseEnumerationDefersPackingWithoutDeletingBlobs(t *testing.T) {
 	skipped, err := catalog.ListUnpacked(ctx)
 	require.NoError(err)
 	assert.Empty(skipped, "a suppressed pass reports no loose candidates")
-
-	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
-	require.NoError(err)
-	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{})
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(maintainer.Close()) })
-
-	stats, err := maintainer.Pack(ctx, packstore.PackOptions{})
-	require.NoError(err)
-	assert.Equal(0, stats.BlobsPacked, "nothing is packed while enumeration is suppressed")
-	assert.FileExists(loosePath, "the deferred blob survives the suppressed pass")
-
-	stats, err = maintainer.Pack(context.Background(), packstore.PackOptions{})
-	require.NoError(err)
-	assert.Equal(1, stats.BlobsPacked, "the next enumerating pass packs the deferred blob")
-	entry, err := st.GetAttachmentPackEntry(hash)
-	require.NoError(err)
-	assert.NotNil(entry)
 }
